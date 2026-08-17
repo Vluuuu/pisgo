@@ -1,0 +1,44 @@
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Node / web
+node_modules/
+.next/
+dist/
+build/
+coverage/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# ML datasets / generated artifacts
+ml/datasets/raw/
+ml/datasets/processed/
+ml/datasets/images/
+ml/runs/
+ml/models/*.pt
+ml/models/*.pth
+ml/models/*.onnx
+ml/models/*.engine
+ml/models/*.tflite
+
+# Local uploads / temp
+uploads/
+tmp/
+*.log
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
