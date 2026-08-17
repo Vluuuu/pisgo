@@ -1,30 +1,37 @@
 # PisGo Web
 
-Bagian fullstack aplikasi PisGo.
+Next.js MVP for Cavendish harvest, route, and arrival-maturity planning.
 
-## Responsibilities
+## Setup
 
-- User interface dan dashboard.
-- Input flowering date.
-- Upload / camera banana image.
-- Origin dan destination autocomplete.
-- Geoapify routing integration.
-- Leaflet route visualization.
-- Backend integration.
-- Menampilkan maturity prediction dan rekomendasi harvest/shipping.
+1. Copy the repository environment example into this app:
 
-## Planned flow
+   ```bash
+   cp ../../.env.example .env.local
+   ```
 
-```text
-Flowering Date + Banana Photo + Origin + Destination + Target Maturity
-                              ↓
-                       PisGo Web/Backend
-                        ↙            ↘
-                 Geoapify API       AI API
-                        ↘            ↙
-                         Optimizer
-                              ↓
-                 Harvest / Shipping Result
+2. Set `GEOAPIFY_API_KEY` in `apps/web/.env.local`. The key stays server-side behind Next.js route handlers.
+3. Install and run:
+
+   ```bash
+   npm install
+   npm run dev
+   ```
+
+4. Open `http://localhost:3000`.
+
+## Verification
+
+```bash
+npm run lint
+npm run typecheck
+npm test
+npm run build
 ```
 
-Implementation framework akan ditentukan saat frontend mulai dibuat.
+## MVP boundaries
+
+- Geoapify autocomplete, light-truck routing, and raster map tiles are live when a valid key is configured.
+- `lib/prediction/mock.ts` follows the shared prediction response contract but does not inspect image pixels.
+- `lib/optimizer/baseline.ts` is a replaceable scheduling heuristic, not a validated maturity forecast.
+- Replace the export in `lib/prediction/index.ts` when the versioned AI service is ready.

@@ -9,6 +9,7 @@ node_modules/
 dist/
 build/
 coverage/
+*.tsbuildinfo
 
 # Python
 __pycache__/
@@ -42,3 +43,15 @@ tmp/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Local Claude Code runtime artifacts
+.claude/worktrees/
+.playwright-mcp/
+# Local UI audit / screenshot artifacts
+/pisgo-*.png
+/pisgo-*.md
+/form-baseline.html
+/origin-autocomplete.html
+
+/apps/web/pisgo-*.png
+/apps/web/pisgo-*.md
