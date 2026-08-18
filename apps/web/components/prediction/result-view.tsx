@@ -2,7 +2,7 @@
 
 import { CheckCircleIcon, FlaskIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { RouteMapLoader } from "@/components/map/route-map-loader";
-import { formatDate, formatDistance, formatDuration } from "@/lib/format";
+import { formatDecisionDate, formatDistance, formatDuration, formatMaturity } from "@/lib/format";
 import type { LocationSuggestion, RouteData } from "@/types/location";
 import type { OptimizerResult, PredictionResponse } from "@/types/prediction";
 
@@ -16,9 +16,9 @@ type ResultViewProps = {
 };
 
 const statusCopy = {
-  on_target: "Expected to arrive on target",
-  under_target: "Expected to arrive below target",
-  over_target: "Expected to arrive above target",
+  on_target: "Diperkirakan tiba sesuai target",
+  under_target: "Diperkirakan tiba lebih hijau dari target",
+  over_target: "Diperkirakan tiba lebih matang dari target",
 };
 
 export function ResultView({ prediction, schedule, route, origin, destination, targetMaturity }: ResultViewProps) {
@@ -30,23 +30,24 @@ export function ResultView({ prediction, schedule, route, origin, destination, t
     <section className="result-workspace" id="recommendation" aria-labelledby="recommendation-title">
       <section className="recommendation">
         <header className="recommendation-header">
-          <p className="section-label">Recommended plan</p>
-          <h2 id="recommendation-title"><span>Ship on</span>{formatDecisionDate(schedule.recommendedShippingDate)}</h2>
+          <p className="section-label">Rencana rekomendasi</p>
+          <h2 id="recommendation-title"><span>Kirim pada</span>{formatDecisionDate(schedule.recommendedShippingDate)}</h2>
+
           <p className="recommendation-status" data-status={schedule.status}>
             {statusOnTarget ? <CheckCircleIcon aria-hidden="true" size={18} weight="fill" /> : <WarningCircleIcon aria-hidden="true" size={18} weight="fill" />}
             {statusCopy[schedule.status]}
           </p>
         </header>
 
-        <div className="schedule-timeline" aria-label="Recommended harvest, shipping, and arrival dates">
-          <ScheduleStep label="Harvest" date={schedule.recommendedHarvestDate} />
+        <div className="schedule-timeline" aria-label="Tanggal panen, kirim, dan tiba yang direkomendasikan">
+          <ScheduleStep label="Panen" date={schedule.recommendedHarvestDate} />
           <span className="schedule-connector" aria-hidden="true" />
-          <ScheduleStep label="Ship" date={schedule.recommendedShippingDate} primary />
+          <ScheduleStep label="Kirim" date={schedule.recommendedShippingDate} primary />
           <span className="schedule-connector" aria-hidden="true" />
-          <ScheduleStep label="Arrive" date={schedule.expectedArrivalDate} />
+          <ScheduleStep label="Tiba" date={schedule.expectedArrivalDate} />
         </div>
 
-        <p className="arrival-maturity"><span>Expected arrival maturity</span><strong>{arrival.toFixed(1)} <small>/ 7</small></strong></p>
+        <p className="arrival-maturity"><span>Perkiraan kematangan saat tiba</span><strong>{formatMaturity(arrival)} <small>/ 7</small></strong></p>
       </section>
 
       <section className="route-result" aria-labelledby="route-map-title">
@@ -58,17 +59,17 @@ export function ResultView({ prediction, schedule, route, origin, destination, t
       </section>
 
       <section className="evidence-section" aria-labelledby="evidence-title">
-        <h3 id="evidence-title">Supporting evidence</h3>
+        <h3 id="evidence-title">Data pendukung</h3>
         <dl className="evidence-list">
-          <Evidence label="DAF" value={`${prediction.days_after_flowering} days`} />
-          <Evidence label="Current maturity" value={`${current.toFixed(1)} / 7`} />
-          <Evidence label="Target maturity" value={`${targetMaturity.toFixed(1)} / 7`} />
-          <Evidence label="AI confidence" value={`${Math.round(prediction.confidence * 100)}%`} />
+          <Evidence label="Hari setelah berbunga" value={`${prediction.days_after_flowering}`} />
+          <Evidence label="Kematangan saat ini" value={`${formatMaturity(current)} / 7`} />
+          <Evidence label="Target kematangan" value={`${formatMaturity(targetMaturity)} / 7`} />
+          <Evidence label="Tingkat keyakinan model" value={`${Math.round(prediction.confidence * 100)}%`} />
         </dl>
       </section>
 
       <footer className="recommendation-meta">
-        <p><FlaskIcon aria-hidden="true" size={16} weight="regular" /> Model {prediction.model_version} · Development simulation</p>
+        <p><FlaskIcon aria-hidden="true" size={16} weight="regular" /> Model {prediction.model_version} · Simulasi pengembangan</p>
       </footer>
     </section>
   );
@@ -77,7 +78,7 @@ export function ResultView({ prediction, schedule, route, origin, destination, t
 function ScheduleStep({ label, date, primary = false }: { label: string; date: string; primary?: boolean }) {
   return (
     <div className="schedule-step" data-primary={primary}>
-      <time dateTime={date}>{formatTimelineDate(date)}</time>
+      <time dateTime={date}>{formatDecisionDate(date)}</time>
       <span>{label}</span>
     </div>
   );
@@ -89,12 +90,4 @@ function Evidence({ label, value }: { label: string; value: string }) {
 
 function shortLocation(location: LocationSuggestion): string {
   return location.city || location.state || location.label.split(",")[0];
-}
-
-function formatDecisionDate(value: string): string {
-  return new Intl.DateTimeFormat("en-US", { day: "2-digit", month: "short", timeZone: "UTC" }).format(new Date(`${value}T00:00:00.000Z`));
-}
-
-function formatTimelineDate(value: string): string {
-  return formatDate(value).replace(/, \d{4}$/, "").toUpperCase();
 }

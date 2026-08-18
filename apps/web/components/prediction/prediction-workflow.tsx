@@ -22,13 +22,13 @@ type WorkflowResult = {
 type FormErrors = Partial<Record<"floweringDate" | "photoDate" | "image" | "targetMaturity" | "origin" | "destination", string>>;
 
 const maturityLabels: Record<number, string> = {
-  1: "Full green",
-  2: "Mature green",
-  3: "Turning",
-  4: "More green than yellow",
-  5: "Yellow",
-  6: "Yellow with flecks",
-  7: "Overripe",
+  1: "Hijau matang",
+  2: "Matang hijau",
+  3: "Kuning hijau",
+  4: "Lebih hijau",
+  5: "Kuning",
+  6: "Kuning bintik",
+  7: "Terlalu matang",
 };
 
 export function PredictionWorkflow() {
@@ -49,17 +49,17 @@ export function PredictionWorkflow() {
 
   function validate(): FormErrors {
     const next: FormErrors = {};
-    if (!floweringDate) next.floweringDate = "Flowering date is required.";
-    if (!photoDate) next.photoDate = "Photo date is required.";
-    if (floweringDate && photoDate && daysBetweenSafe(floweringDate, photoDate) < 0) next.floweringDate = "Flowering must be before the photo date.";
-    if (photoDate > today) next.photoDate = "Photo date cannot be in the future.";
-    if (!image) next.image = "Upload a banana photo to continue.";
-    else if (image.size > 10 * 1024 * 1024) next.image = "Photo size must not exceed 10 MB.";
-    else if (!image.type.startsWith("image/")) next.image = "The file must be an image.";
-    if (targetMaturity < 1 || targetMaturity > 7) next.targetMaturity = "Choose a target maturity from 1 to 7.";
-    if (!origin) next.origin = "Select an origin from the search results.";
-    if (!destination) next.destination = "Select a destination from the search results.";
-    if (origin && destination && origin.lat === destination.lat && origin.lon === destination.lon) next.destination = "Destination must differ from origin.";
+    if (!floweringDate) next.floweringDate = "Tanggal berbunga wajib diisi.";
+    if (!photoDate) next.photoDate = "Tanggal foto wajib diisi.";
+    if (floweringDate && photoDate && daysBetweenSafe(floweringDate, photoDate) < 0) next.floweringDate = "Tanggal berbunga harus sebelum tanggal foto.";
+    if (photoDate > today) next.photoDate = "Tanggal foto tidak boleh di masa depan.";
+    if (!image) next.image = "Unggah foto pisang untuk melanjutkan.";
+    else if (image.size > 10 * 1024 * 1024) next.image = "Ukuran foto tidak boleh lebih dari 10 MB.";
+    else if (!image.type.startsWith("image/")) next.image = "File harus berupa gambar.";
+    if (targetMaturity < 1 || targetMaturity > 7) next.targetMaturity = "Pilih target kematangan dari 1 sampai 7.";
+    if (!origin) next.origin = "Pilih lokasi asal dari hasil pencarian.";
+    if (!destination) next.destination = "Pilih lokasi tujuan dari hasil pencarian.";
+    if (origin && destination && origin.lat === destination.lat && origin.lon === destination.lon) next.destination = "Tujuan harus berbeda dari asal.";
     return next;
   }
 
@@ -121,18 +121,18 @@ export function PredictionWorkflow() {
   }
 
   return (
-    <section className="workspace" aria-label="Harvest and shipping analysis workspace">
+    <section className="workspace" aria-label="Workspace analisis panen dan pengiriman">
       <form noValidate onSubmit={handleSubmit} className="control-rail" id="controls">
         <header className="rail-header">
-          <h1>New harvest plan</h1>
-          <p>Set the fruit, maturity target, and delivery route.</p>
+          <h1>Rencana panen baru</h1>
+          <p>Tentukan data buah, target kematangan, dan rute pengiriman.</p>
         </header>
 
         <fieldset className="control-group fruit-controls">
-          <legend>Fruit</legend>
+          <legend>Data buah</legend>
           <DateField
             id="flowering-date"
-            label="Flowering date"
+            label="Tanggal berbunga"
             value={floweringDate}
             max={photoDate || today}
             onChange={(value) => { setFloweringDate(value); setResult(null); setErrors((current) => ({ ...current, floweringDate: undefined })); }}
@@ -141,7 +141,7 @@ export function PredictionWorkflow() {
 
           {daf !== null && daf >= 0 && (
             <p className="daf-inline" aria-live="polite">
-              <span>DAF</span><strong>{daf} days</strong><small>after flowering</small>
+              <span>Usia buah</span><strong>{daf}</strong><small>hari setelah berbunga</small>
             </p>
           )}
 
@@ -149,7 +149,7 @@ export function PredictionWorkflow() {
 
           <DateField
             id="photo-date"
-            label="Photo date"
+            label="Tanggal foto"
             value={photoDate}
             max={today}
             secondary
@@ -159,12 +159,12 @@ export function PredictionWorkflow() {
         </fieldset>
 
         <fieldset className="control-group maturity-group">
-          <legend className="sr-only">Target maturity</legend>
+          <legend className="sr-only">Target kematangan</legend>
           <div className="maturity-heading">
-            <label htmlFor="target-maturity">Target maturity</label>
+            <label htmlFor="target-maturity">Target kematangan</label>
             <output htmlFor="target-maturity">{targetMaturity}<small>/7</small></output>
           </div>
-          <div className="maturity-extremes" aria-hidden="true"><span>More green</span><span>More yellow</span></div>
+          <div className="maturity-extremes" aria-hidden="true"><span>Lebih hijau</span><span>Lebih kuning</span></div>
           <input
             id="target-maturity"
             type="range"
@@ -180,21 +180,21 @@ export function PredictionWorkflow() {
         </fieldset>
 
         <fieldset className="control-group route-controls">
-          <legend>Route</legend>
+          <legend>Rute</legend>
           <div className="route-stack">
-            <div className="route-field"><LocationAutocomplete label="Origin" value={origin} onChange={changeOrigin} placeholder="Farm, packhouse, or city" />{errors.origin && <p role="alert" className="field-error">{errors.origin}</p>}</div>
+            <div className="route-field"><LocationAutocomplete label="Asal" value={origin} onChange={changeOrigin} placeholder="Kebun, rumah kemas, atau kota" />{errors.origin && <p role="alert" className="field-error">{errors.origin}</p>}</div>
             <div className="route-line-input" aria-hidden="true" />
-            <div className="route-field"><LocationAutocomplete label="Destination" value={destination} onChange={changeDestination} placeholder="Market, port, or city" />{errors.destination && <p role="alert" className="field-error">{errors.destination}</p>}</div>
+            <div className="route-field"><LocationAutocomplete label="Tujuan" value={destination} onChange={changeDestination} placeholder="Pasar, pelabuhan, atau kota" />{errors.destination && <p role="alert" className="field-error">{errors.destination}</p>}</div>
           </div>
-          <p className="transport-mode">Light truck <span aria-hidden="true">·</span> Free-flow routing</p>
+          <p className="transport-mode">Truk ringan <span aria-hidden="true">·</span> Estimasi tanpa kemacetan</p>
         </fieldset>
 
         {error && <div role="alert" className="analysis-error">{error}</div>}
 
         <div className="analysis-command">
-          <p className={busy ? "analysis-status" : "sr-only"} aria-live="polite">{phase === "routing" ? "Calculating light-truck route…" : phase === "predicting" ? "Estimating maturity…" : ""}</p>
+          <p className={busy ? "analysis-status" : "sr-only"} aria-live="polite">{phase === "routing" ? "Menghitung rute…" : phase === "predicting" ? "Menganalisis buah…" : ""}</p>
           <button type="submit" disabled={busy} className="analyze-button">
-            {busy ? <><SpinnerGapIcon className="spin" aria-hidden="true" size={19} />{phase === "routing" ? "Calculating route" : "Analyzing fruit"}</> : "Analyze harvest plan"}
+            {busy ? <><SpinnerGapIcon className="spin" aria-hidden="true" size={19} />{phase === "routing" ? "Menghitung rute" : "Menganalisis buah"}</> : "Analisis rencana panen"}
           </button>
         </div>
       </form>

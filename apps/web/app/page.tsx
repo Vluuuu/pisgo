@@ -11,14 +11,14 @@ export default function Home() {
           <PathIcon aria-hidden="true" size={18} weight="bold" />
           <span className="brand-name">PisGo</span>
         </a>
-        <p className="workspace-label">Harvest planning</p>
+        <p className="workspace-label">Perencanaan panen</p>
       </header>
 
       <PredictionWorkflow />
 
       <footer className="site-footer">
-        <p>PisGo · Cavendish operations</p>
-        <p>Prediction and optimizer use development baselines.</p>
+        <p>PisGo · Operasional Cavendish</p>
+        <p>Prediksi dan optimasi masih menggunakan model pengembangan.</p>
       </footer>
     </main>
   );
