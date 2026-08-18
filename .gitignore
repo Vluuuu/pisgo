@@ -55,3 +55,8 @@ Thumbs.db
 
 /apps/web/pisgo-*.png
 /apps/web/pisgo-*.md
+
+# Local verification artifacts
+/screenshots-after/
+/verification/
+/test-banana.png
