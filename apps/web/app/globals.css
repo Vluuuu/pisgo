@@ -132,6 +132,7 @@ a { color: inherit; }
 .control-group legend:not(.sr-only) { width: 100%; padding: 0 0 1rem; color: var(--muted); font-size: .72rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
 .date-field, .upload-field, .location-field { position: relative; min-width: 0; }
 .date-field > label, .field-heading label, .location-field > label, .maturity-heading label { display: block; font-size: .78rem; font-weight: 650; }
+.date-field > label { width: fit-content; }
 .date-input-wrap, .location-input-wrap { position: relative; margin-top: .45rem; }
 .date-input-wrap > svg, .location-input-wrap > svg { position: absolute; z-index: 1; inset: 50% auto auto .8rem; color: var(--muted); transform: translateY(-50%); pointer-events: none; }
 .field { width: 100%; min-height: 2.75rem; padding: .62rem .75rem .62rem 2.35rem; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); color: var(--ink); outline: 0; transition: border-color .15s ease, box-shadow .15s ease; }

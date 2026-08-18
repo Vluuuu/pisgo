@@ -205,10 +205,22 @@ export function PredictionWorkflow() {
 }
 
 function DateField({ id, label, value, max, onChange, error, secondary = false }: { id: string; label: string; value: string; max: string; onChange: (value: string) => void; error?: string; secondary?: boolean }) {
+  function handleInputClick(event: React.MouseEvent<HTMLInputElement>) {
+    const input = event.currentTarget;
+    try {
+      input.showPicker?.();
+    } catch {
+      // showPicker can throw (e.g. missing user activation); native click behavior remains.
+    }
+  }
+
   return (
     <div className="date-field" data-secondary={secondary}>
       <label htmlFor={id}>{label}</label>
-      <div className="date-input-wrap"><CalendarBlankIcon aria-hidden="true" size={18} /><input id={id} type="date" value={value} max={max} onChange={(event) => onChange(event.target.value)} className="field" data-error={Boolean(error)} /></div>
+      <div className="date-input-wrap">
+        <CalendarBlankIcon aria-hidden="true" size={18} />
+        <input id={id} type="date" value={value} max={max} onClick={handleInputClick} onChange={(event) => onChange(event.target.value)} className="field" data-error={Boolean(error)} />
+      </div>
       {error && <p role="alert" className="field-error">{error}</p>}
     </div>
   );
