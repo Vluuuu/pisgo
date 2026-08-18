@@ -54,14 +54,22 @@ a { color: inherit; }
 
 .skip-link {
   position: fixed;
-  inset: .75rem auto auto .75rem;
+  left: 1rem;
+  top: 1rem;
   z-index: 1000;
   padding: .7rem 1rem;
   background: var(--ink);
   color: var(--surface);
-  transform: translateY(calc(-100% - 1.5rem));
+  transform: translateY(-200%);
+  opacity: 0;
+  transition: transform .2s ease, opacity .2s ease;
 }
-.skip-link:focus-visible { transform: translateY(0); }
+.skip-link:focus-visible {
+  transform: translateY(0);
+  opacity: 1;
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 
 .app-shell { min-height: 100dvh; }
 .product-bar {
@@ -84,6 +92,19 @@ a { color: inherit; }
   margin: 0 auto;
   padding: 2.25rem 2rem 3rem;
   background: var(--surface);
+}
+/* Desktop before analysis: centered planning form */
+@media (min-width: 1200px) {
+  .workspace:not(:has(.result-workspace)) {
+    justify-content: center;
+  }
+  .control-rail:not(:has(.result-workspace)) {
+    max-width: 800px;
+    width: 100%;
+    margin: 0 auto;
+    padding-left: 2rem;
+    padding-right: 2rem;
+  }
 }
 .workspace:has(.result-workspace) {
   display: grid;
@@ -133,6 +154,7 @@ a { color: inherit; }
 .photo-stage { position: relative; aspect-ratio: 16 / 7; min-height: 7.75rem; overflow: hidden; border: 1px dashed var(--line-strong); border-radius: 8px; background: var(--surface-muted); }
 .photo-stage:has(.photo-caption) { border-style: solid; }
 .photo-stage[data-error="true"] { border-color: var(--error); }
+.photo-stage[data-dragging="true"] { border-color: var(--accent); border-width: 2px; background: color-mix(in srgb, var(--accent-soft) 40%, var(--surface-muted)); }
 .photo-prompt { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: .8rem; padding: 1rem; cursor: pointer; text-align: left; transition: background-color .15s ease; }
 .photo-prompt:hover { background: var(--accent-soft); }
 .photo-prompt > svg { color: var(--accent); }
@@ -201,9 +223,9 @@ a { color: inherit; }
 .schedule-step span { display: block; margin-top: .25rem; color: var(--muted); font-size: .68rem; font-weight: 620; letter-spacing: .045em; text-transform: uppercase; }
 .schedule-step[data-primary="true"] time, .schedule-step[data-primary="true"] span { color: var(--accent-deep); font-weight: 700; }
 .schedule-connector { height: 1px; background: var(--line-strong); }
-.arrival-maturity { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; margin: 0 1.5rem; padding: .8rem 0; border-top: 1px solid color-mix(in srgb, var(--maturity) 32%, var(--line)); background: color-mix(in srgb, var(--maturity-soft) 42%, var(--surface)); color: color-mix(in srgb, var(--maturity) 68%, var(--ink)); }
-.arrival-maturity span { font-size: .76rem; }
-.arrival-maturity strong { color: color-mix(in srgb, var(--maturity) 68%, var(--ink)); font-family: var(--font-geist-mono), monospace; font-size: 1.2rem; font-weight: 580; font-variant-numeric: tabular-nums; }
+.arrival-maturity { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin: 0; padding: .9rem 1.5rem; border-top: 1px solid color-mix(in srgb, var(--maturity) 32%, var(--line)); background: color-mix(in srgb, var(--maturity-soft) 42%, var(--surface)); color: color-mix(in srgb, var(--maturity) 68%, var(--ink)); }
+.arrival-maturity span { font-size: .85rem; }
+.arrival-maturity strong { color: color-mix(in srgb, var(--maturity) 68%, var(--ink)); font-family: var(--font-geist-mono), monospace; font-size: 1.15rem; font-weight: 580; font-variant-numeric: tabular-nums; letter-spacing: .01em; }
 .arrival-maturity small { color: inherit; font-size: .7rem; }
 
 .route-result { margin-top: 1.5rem; }
@@ -263,7 +285,7 @@ a { color: inherit; }
   .schedule-timeline { grid-template-columns: minmax(0, 1fr) minmax(1.25rem, .35fr) minmax(0, 1fr) minmax(1.25rem, .35fr) minmax(0, 1fr); justify-content: stretch; padding: .1rem 1rem 1.15rem; }
   .schedule-step time { font-size: .8rem; }
   .schedule-step span { font-size: .65rem; }
-  .arrival-maturity { margin-inline: 1rem; padding: .75rem 0; }
+  .arrival-maturity { margin-inline: 0; padding: .75rem 1rem; }
   .route-result { margin: 1.5rem -1rem 0; }
   .route-summary { padding: 1.2rem 1rem .8rem; }
   .route-summary h2 { gap: .45rem; font-size: 1.3rem; }
