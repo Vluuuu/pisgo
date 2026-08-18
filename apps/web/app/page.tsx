@@ -18,7 +18,7 @@ export default function Home() {
 
       <footer className="site-footer">
         <p>PisGo · Operasional Cavendish</p>
-        <p>Prototipo: prediksi kematangan masih memakai model dasar, bukan model ML final.</p>
+        <p>Prototipe: prediksi kematangan masih memakai model dasar, bukan model ML final.</p>
       </footer>
     </main>
   );
