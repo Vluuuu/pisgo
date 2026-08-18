@@ -79,7 +79,7 @@ export function PredictionWorkflow() {
         body: JSON.stringify({ origin: { lat: origin.lat, lon: origin.lon }, destination: { lat: destination.lat, lon: destination.lon } }),
       });
       const routeData = (await routeResponse.json()) as RouteData & { error?: string };
-      if (!routeResponse.ok) throw new Error(routeData.error ?? "Route could not be calculated.");
+      if (!routeResponse.ok) throw new Error(routeData.error ?? "Rute tidak dapat dihitung.");
 
       setPhase("predicting");
       const form = new FormData();
@@ -89,8 +89,8 @@ export function PredictionWorkflow() {
       form.set("image", image);
       const predictionResponse = await fetch("/api/predict", { method: "POST", body: form });
       const prediction = (await predictionResponse.json()) as PredictionResponse & { error?: string };
-      if (!predictionResponse.ok) throw new Error(prediction.error ?? "Prediction could not be created.");
-      if (!prediction.banana_detected) throw new Error("No banana was detected in the photo. Use another photo.");
+      if (!predictionResponse.ok) throw new Error(prediction.error ?? "Prediksi tidak dapat dibuat.");
+      if (!prediction.banana_detected) throw new Error("Pisang tidak terdeteksi di foto. Gunakan foto lain.");
 
       const schedule = optimizeSchedule({
         photoDate,
@@ -102,7 +102,7 @@ export function PredictionWorkflow() {
       setResult({ prediction, route: routeData, schedule, origin, destination, targetMaturity });
       requestAnimationFrame(() => document.getElementById("recommendation")?.scrollIntoView({ behavior: "smooth", block: "start" }));
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Analysis failed. Try again.");
+      setError(caught instanceof Error ? caught.message : "Analisis gagal. Coba lagi.");
     } finally {
       setPhase("idle");
     }

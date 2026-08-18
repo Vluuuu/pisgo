@@ -69,7 +69,7 @@ export function ResultView({ prediction, schedule, route, origin, destination, t
       </section>
 
       <footer className="recommendation-meta">
-        <p><FlaskIcon aria-hidden="true" size={16} weight="regular" /> Model {prediction.model_version} · Simulasi pengembangan</p>
+        <p><FlaskIcon aria-hidden="true" size={16} weight="regular" /> Model {prediction.model_version}</p>
       </footer>
     </section>
   );
