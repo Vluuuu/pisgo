@@ -32,8 +32,8 @@ function FitSelection({ origin, destination, route }: RouteMapProps) {
 
 export function RouteMap({ origin, destination, route }: RouteMapProps) {
   const label = origin && destination
-    ? `Route map from ${origin.label} to ${destination.label}`
-    : "Route planning map";
+    ? `Peta rute dari ${origin.label} ke ${destination.label}`
+    : "Peta perencanaan rute";
 
   return (
     <div className="map-shell">
@@ -42,19 +42,19 @@ export function RouteMap({ origin, destination, route }: RouteMapProps) {
         {route && <Polyline positions={route.path} pathOptions={{ color: "#285b3a", weight: 5, opacity: 0.92, lineCap: "round", lineJoin: "round", className: "route-line" }} />}
         {origin && (
           <CircleMarker center={[origin.lat, origin.lon]} radius={8} pathOptions={{ color: "#fbfaf6", weight: 3, fillColor: "#285b3a", fillOpacity: 1 }}>
-            <Tooltip direction="top" offset={[0, -8]}>Origin: {origin.label}</Tooltip>
+            <Tooltip direction="top" offset={[0, -8]}>Asal: {origin.label}</Tooltip>
           </CircleMarker>
         )}
         {destination && (
           <CircleMarker center={[destination.lat, destination.lon]} radius={8} pathOptions={{ color: "#fbfaf6", weight: 3, fillColor: "#172019", fillOpacity: 1 }}>
-            <Tooltip direction="top" offset={[0, -8]}>Destination: {destination.label}</Tooltip>
+            <Tooltip direction="top" offset={[0, -8]}>Tujuan: {destination.label}</Tooltip>
           </CircleMarker>
         )}
         <FitSelection origin={origin} destination={destination} route={route} />
       </MapContainer>
       {!route && (
         <p className="map-instruction">
-          {origin || destination ? "Select both endpoints to calculate the route." : "Search for an origin and destination to begin route planning."}
+          {origin || destination ? "Pilih lokasi asal dan tujuan untuk menghitung rute." : "Cari lokasi asal dan tujuan untuk mulai merencanakan rute."}
         </p>
       )}
     </div>

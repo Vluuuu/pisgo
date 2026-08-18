@@ -108,7 +108,7 @@ export function LocationAutocomplete({ label, value, onChange, placeholder }: Lo
           onBlur={() => { blurTimer.current = setTimeout(() => setOpen(false), 150); }}
           onKeyDown={handleKeyDown}
         />
-        {status === "loading" && <SpinnerGapIcon aria-label="Searching locations" className="location-spinner" size={19} />}
+        {status === "loading" && <SpinnerGapIcon aria-label="Mencari lokasi" className="location-spinner" size={19} />}
       </div>
       {open && status !== "idle" && (
         <div className="location-results">

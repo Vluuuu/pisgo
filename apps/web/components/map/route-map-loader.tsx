@@ -5,7 +5,7 @@ import type { LocationSuggestion, RouteData } from "@/types/location";
 
 const RouteMap = dynamic(() => import("./route-map").then((module) => module.RouteMap), {
   ssr: false,
-  loading: () => <div className="map-loading" aria-label="Loading map"><span>Loading map</span></div>,
+  loading: () => <div className="map-loading" aria-label="Memuat peta"><span>Memuat peta</span></div>,
 });
 
 export function RouteMapLoader(props: {

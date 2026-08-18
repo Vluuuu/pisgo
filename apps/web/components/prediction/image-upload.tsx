@@ -10,18 +10,32 @@ type ImageUploadProps = {
   error?: string;
 };
 
+const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+
+function validateImageFile(file: File): string | null {
+  if (!ALLOWED_IMAGE_TYPES.has(file.type)) {
+    return "Format foto harus JPG, PNG, atau WebP.";
+  }
+  if (file.size > MAX_IMAGE_BYTES) {
+    return "Ukuran foto maksimal 10 MB.";
+  }
+  return null;
+}
+
 export function ImageUpload({ value, onChange, error }: ImageUploadProps) {
   const inputId = useId();
   const [isDragging, setIsDragging] = useState(false);
+  const [validationError, setValidationError] = useState<string | null>(null);
 
-  function handleDrop(file: File | null) {
+  function handleFile(file: File | null) {
     if (!file) return;
-    if (!file.type.startsWith("image/")) {
+    const message = validateImageFile(file);
+    if (message) {
+      setValidationError(message);
       return;
     }
-    if (file.size > 10 * 1024 * 1024) {
-      return;
-    }
+    setValidationError(null);
     onChange(file);
   }
 
@@ -35,7 +49,7 @@ export function ImageUpload({ value, onChange, error }: ImageUploadProps) {
         event.preventDefault();
         event.stopPropagation();
         setIsDragging(false);
-        handleDrop(event.dataTransfer.files?.[0] ?? null);
+        handleFile(event.dataTransfer.files?.[0] ?? null);
       }}
     >
       <div className="field-heading">
@@ -62,12 +76,12 @@ export function ImageUpload({ value, onChange, error }: ImageUploadProps) {
           type="file"
           accept="image/jpeg,image/png,image/webp"
           aria-labelledby={`${inputId}-label`}
-          onClick={(event) => { event.currentTarget.value = ""; }}
-          onChange={(event) => onChange(event.target.files?.[0] ?? null)}
+          onClick={(event) => { event.currentTarget.value = ""; setValidationError(null); }}
+          onChange={(event) => handleFile(event.target.files?.[0] ?? null)}
         />
       </div>
 
-      {error && <p role="alert" className="field-error">{error}</p>}
+      {(error ?? validationError) && <p role="alert" className="field-error">{error ?? validationError}</p>}
     </div>
   );
 }
