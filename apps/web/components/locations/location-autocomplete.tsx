@@ -108,7 +108,7 @@ export function LocationAutocomplete({ label, value, onChange, placeholder }: Lo
           onBlur={() => { blurTimer.current = setTimeout(() => setOpen(false), 150); }}
           onKeyDown={handleKeyDown}
         />
-        {status === "loading" && <SpinnerGapIcon aria-label="Searching locations" className="location-spinner" size={19} />}
+        {status === "loading" && <SpinnerGapIcon aria-label="Mencari lokasi" className="location-spinner" size={19} />}
       </div>
       {open && status !== "idle" && (
         <div className="location-results">
@@ -132,7 +132,7 @@ export function LocationAutocomplete({ label, value, onChange, placeholder }: Lo
             </ul>
           ) : (
             <p role="status" className="location-status">
-              {status === "loading" ? "Searching locations…" : status === "empty" ? "No locations found. Try another search." : "Location search failed. Check the connection and try again."}
+              {status === "loading" ? "Mencari lokasi…" : status === "empty" ? "Tidak ada lokasi ditemukan. Coba pencarian lain." : "Pencarian lokasi gagal. Periksa koneksi dan coba lagi."}
             </p>
           )}
         </div>

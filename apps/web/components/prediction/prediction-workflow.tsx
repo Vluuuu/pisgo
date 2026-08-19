@@ -1,10 +1,11 @@
 "use client";
 
-import { CalendarBlankIcon, SpinnerGapIcon } from "@phosphor-icons/react";
+import { CalendarBlankIcon, CameraIcon, ShieldCheckIcon, SpinnerGapIcon, TruckIcon } from "@phosphor-icons/react";
 import { useState } from "react";
 import { LocationAutocomplete } from "@/components/locations/location-autocomplete";
 import { ImageUpload } from "./image-upload";
 import { ResultView } from "./result-view";
+import { MATURITY_SPECTRUM, MaturityInstrumentControl, MaturityInstrumentDisplay } from "./maturity-instrument";
 import { daysBetween, todayIso } from "@/lib/dates";
 import { optimizeSchedule } from "@/lib/optimizer/baseline";
 import type { LocationSuggestion, RouteData } from "@/types/location";
@@ -21,15 +22,9 @@ type WorkflowResult = {
 
 type FormErrors = Partial<Record<"floweringDate" | "photoDate" | "image" | "targetMaturity" | "origin" | "destination", string>>;
 
-const maturityLabels: Record<number, string> = {
-  1: "Full green",
-  2: "Mature green",
-  3: "Turning",
-  4: "More green than yellow",
-  5: "Yellow",
-  6: "Yellow with flecks",
-  7: "Overripe",
-};
+export const maturityLabels: Record<number, string> = Object.fromEntries(
+  MATURITY_SPECTRUM.map((item) => [item.level, item.label])
+);
 
 export function PredictionWorkflow() {
   const today = todayIso();
@@ -46,20 +41,21 @@ export function PredictionWorkflow() {
 
   const daf = floweringDate && photoDate ? daysBetweenSafe(floweringDate, photoDate) : null;
   const busy = phase !== "idle";
+  const selectedMaturityInfo = MATURITY_SPECTRUM.find((m) => m.level === targetMaturity) ?? MATURITY_SPECTRUM[3];
 
   function validate(): FormErrors {
     const next: FormErrors = {};
-    if (!floweringDate) next.floweringDate = "Flowering date is required.";
-    if (!photoDate) next.photoDate = "Photo date is required.";
-    if (floweringDate && photoDate && daysBetweenSafe(floweringDate, photoDate) < 0) next.floweringDate = "Flowering must be before the photo date.";
-    if (photoDate > today) next.photoDate = "Photo date cannot be in the future.";
-    if (!image) next.image = "Upload a banana photo to continue.";
-    else if (image.size > 10 * 1024 * 1024) next.image = "Photo size must not exceed 10 MB.";
-    else if (!image.type.startsWith("image/")) next.image = "The file must be an image.";
-    if (targetMaturity < 1 || targetMaturity > 7) next.targetMaturity = "Choose a target maturity from 1 to 7.";
-    if (!origin) next.origin = "Select an origin from the search results.";
-    if (!destination) next.destination = "Select a destination from the search results.";
-    if (origin && destination && origin.lat === destination.lat && origin.lon === destination.lon) next.destination = "Destination must differ from origin.";
+    if (!floweringDate) next.floweringDate = "Tanggal berbunga wajib diisi.";
+    if (!photoDate) next.photoDate = "Tanggal foto wajib diisi.";
+    if (floweringDate && photoDate && daysBetweenSafe(floweringDate, photoDate) < 0) next.floweringDate = "Tanggal berbunga harus sebelum tanggal foto.";
+    if (photoDate > today) next.photoDate = "Tanggal foto tidak boleh di masa depan.";
+    if (!image) next.image = "Unggah foto pisang untuk melanjutkan.";
+    else if (image.size > 10 * 1024 * 1024) next.image = "Ukuran foto tidak boleh lebih dari 10 MB.";
+    else if (!image.type.startsWith("image/")) next.image = "File harus berupa gambar.";
+    if (targetMaturity < 1 || targetMaturity > 7) next.targetMaturity = "Pilih target kematangan dari 1 sampai 7.";
+    if (!origin) next.origin = "Pilih lokasi asal dari hasil pencarian.";
+    if (!destination) next.destination = "Pilih lokasi tujuan dari hasil pencarian.";
+    if (origin && destination && origin.lat === destination.lat && origin.lon === destination.lon) next.destination = "Tujuan harus berbeda dari asal.";
     return next;
   }
 
@@ -79,7 +75,7 @@ export function PredictionWorkflow() {
         body: JSON.stringify({ origin: { lat: origin.lat, lon: origin.lon }, destination: { lat: destination.lat, lon: destination.lon } }),
       });
       const routeData = (await routeResponse.json()) as RouteData & { error?: string };
-      if (!routeResponse.ok) throw new Error(routeData.error ?? "Route could not be calculated.");
+      if (!routeResponse.ok) throw new Error(routeData.error ?? "Rute tidak dapat dihitung.");
 
       setPhase("predicting");
       const form = new FormData();
@@ -89,8 +85,8 @@ export function PredictionWorkflow() {
       form.set("image", image);
       const predictionResponse = await fetch("/api/predict", { method: "POST", body: form });
       const prediction = (await predictionResponse.json()) as PredictionResponse & { error?: string };
-      if (!predictionResponse.ok) throw new Error(prediction.error ?? "Prediction could not be created.");
-      if (!prediction.banana_detected) throw new Error("No banana was detected in the photo. Use another photo.");
+      if (!predictionResponse.ok) throw new Error(prediction.error ?? "Prediksi tidak dapat dibuat.");
+      if (!prediction.banana_detected) throw new Error("Pisang tidak terdeteksi di foto. Gunakan foto lain.");
 
       const schedule = optimizeSchedule({
         photoDate,
@@ -102,7 +98,7 @@ export function PredictionWorkflow() {
       setResult({ prediction, route: routeData, schedule, origin, destination, targetMaturity });
       requestAnimationFrame(() => document.getElementById("recommendation")?.scrollIntoView({ behavior: "smooth", block: "start" }));
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Analysis failed. Try again.");
+      setError(caught instanceof Error ? caught.message : "Analisis gagal. Coba lagi.");
     } finally {
       setPhase("idle");
     }
@@ -121,18 +117,22 @@ export function PredictionWorkflow() {
   }
 
   return (
-    <section className="workspace" aria-label="Harvest and shipping analysis workspace">
+    <section className="workspace" aria-label="Workspace analisis panen dan pengiriman">
       <form noValidate onSubmit={handleSubmit} className="control-rail" id="controls">
         <header className="rail-header">
-          <h1>New harvest plan</h1>
-          <p>Set the fruit, maturity target, and delivery route.</p>
+          <div className="rail-header-eyebrow">
+            <span className="eyebrow-badge">Alur Kerja Keputusan</span>
+            <span className="eyebrow-rule" />
+          </div>
+          <h1>Rencana Panen Baru</h1>
+          <p>Tentukan parameter buah, target kematangan saat tiba di tujuan, dan rute pengiriman.</p>
         </header>
 
         <fieldset className="control-group fruit-controls">
-          <legend>Fruit</legend>
+          <legend><span className="section-number" aria-hidden="true">01</span>Data buah</legend>
           <DateField
             id="flowering-date"
-            label="Flowering date"
+            label="Tanggal berbunga"
             value={floweringDate}
             max={photoDate || today}
             onChange={(value) => { setFloweringDate(value); setResult(null); setErrors((current) => ({ ...current, floweringDate: undefined })); }}
@@ -140,16 +140,21 @@ export function PredictionWorkflow() {
           />
 
           {daf !== null && daf >= 0 && (
-            <p className="daf-inline" aria-live="polite">
-              <span>DAF</span><strong>{daf} days</strong><small>after flowering</small>
-            </p>
+            <div className="daf-inline" aria-live="polite">
+              <span className="daf-label">Usia buah terhitung:</span>
+              <strong className="daf-value">{daf}</strong>
+              <small className="daf-unit">hari setelah berbunga</small>
+            </div>
           )}
+        </fieldset>
 
+        <fieldset className="control-group specimen-controls">
+          <legend><span className="section-number" aria-hidden="true">02</span>Foto tandan</legend>
           <ImageUpload value={image} onChange={(file) => { setImage(file); setResult(null); setErrors((current) => ({ ...current, image: undefined })); }} error={errors.image} />
 
           <DateField
             id="photo-date"
-            label="Photo date"
+            label="Tanggal foto"
             value={photoDate}
             max={today}
             secondary
@@ -159,45 +164,176 @@ export function PredictionWorkflow() {
         </fieldset>
 
         <fieldset className="control-group maturity-group">
-          <legend className="sr-only">Target maturity</legend>
-          <div className="maturity-heading">
-            <label htmlFor="target-maturity">Target maturity</label>
-            <output htmlFor="target-maturity">{targetMaturity}<small>/7</small></output>
-          </div>
-          <div className="maturity-extremes" aria-hidden="true"><span>More green</span><span>More yellow</span></div>
-          <input
+          <legend><span className="section-number" aria-hidden="true">03</span>Target</legend>
+
+          <MaturityInstrumentControl
             id="target-maturity"
-            type="range"
-            min="1"
-            max="7"
-            step="1"
             value={targetMaturity}
-            onChange={(event) => { setTargetMaturity(Number(event.target.value)); setResult(null); }}
-            className="maturity-range"
-            aria-valuetext={`${targetMaturity}, ${maturityLabels[targetMaturity]}`}
+            onChange={(val) => {
+              setTargetMaturity(val);
+              setResult(null);
+            }}
           />
+
           {errors.targetMaturity && <p role="alert" className="field-error">{errors.targetMaturity}</p>}
         </fieldset>
 
         <fieldset className="control-group route-controls">
-          <legend>Route</legend>
+          <legend><span className="section-number" aria-hidden="true">04</span>Perjalanan</legend>
           <div className="route-stack">
-            <div className="route-field"><LocationAutocomplete label="Origin" value={origin} onChange={changeOrigin} placeholder="Farm, packhouse, or city" />{errors.origin && <p role="alert" className="field-error">{errors.origin}</p>}</div>
-            <div className="route-line-input" aria-hidden="true" />
-            <div className="route-field"><LocationAutocomplete label="Destination" value={destination} onChange={changeDestination} placeholder="Market, port, or city" />{errors.destination && <p role="alert" className="field-error">{errors.destination}</p>}</div>
+            <div className="route-field">
+              <LocationAutocomplete label="Asal" value={origin} onChange={changeOrigin} placeholder="Kebun, rumah kemas, atau kota asal" />
+              {errors.origin && <p role="alert" className="field-error">{errors.origin}</p>}
+            </div>
+            <div className="route-connector-line" aria-hidden="true">
+              <span className="connector-dot origin" />
+              <span className="connector-line" />
+              <span className="connector-dot dest" />
+            </div>
+            <div className="route-field">
+              <LocationAutocomplete label="Tujuan" value={destination} onChange={changeDestination} placeholder="Pasar induk, pelabuhan, atau kota tujuan" />
+              {errors.destination && <p role="alert" className="field-error">{errors.destination}</p>}
+            </div>
           </div>
-          <p className="transport-mode">Light truck <span aria-hidden="true">·</span> Free-flow routing</p>
+          <div className="transport-mode-badge">
+            <TruckIcon size={16} weight="bold" aria-hidden="true" />
+            <span>Truk ringan · Estimasi kondisi lalu lintas umum</span>
+          </div>
         </fieldset>
 
         {error && <div role="alert" className="analysis-error">{error}</div>}
 
         <div className="analysis-command">
-          <p className={busy ? "analysis-status" : "sr-only"} aria-live="polite">{phase === "routing" ? "Calculating light-truck route…" : phase === "predicting" ? "Estimating maturity…" : ""}</p>
+          <p className={busy ? "analysis-status" : "sr-only"} aria-live="polite">
+            {phase === "routing" ? "Menghitung jarak dan durasi rute…" : phase === "predicting" ? "Menganalisis kematangan tandan buah…" : ""}
+          </p>
           <button type="submit" disabled={busy} className="analyze-button">
-            {busy ? <><SpinnerGapIcon className="spin" aria-hidden="true" size={19} />{phase === "routing" ? "Calculating route" : "Analyzing fruit"}</> : "Analyze harvest plan"}
+            {busy ? (
+              <>
+                <SpinnerGapIcon className="spin" aria-hidden="true" size={20} />
+                <span>{phase === "routing" ? "Menghitung Rute Logistik…" : "Menganalisis Kematangan Buah…"}</span>
+              </>
+            ) : (
+              <>
+                <ShieldCheckIcon size={20} weight="bold" aria-hidden="true" />
+                <span>Analisis Rencana Panen</span>
+              </>
+            )}
           </button>
         </div>
       </form>
+
+      {!result && (
+        <aside className="standby-instrument" aria-label="Perencanaan kematangan & pengiriman">
+          <div className="standby-canvas">
+            <header className="standby-header">
+              <div className="standby-tag">
+                <span className="tag-pulse" />
+                <span>PERENCANAAN KEMATANGAN & PENGIRIMAN</span>
+              </div>
+              <h2>Alur Pematangan & Logistik</h2>
+              <p className="standby-lead">
+                PisGo membaca kematangan tandan dari foto spesimen kebun, memetakan posisinya pada skala kematangan Cavendish (1–7), lalu memproyeksikan durasi transit untuk menetapkan jadwal panen dan pengiriman yang tepat.
+              </p>
+            </header>
+
+            {/* Standby Coherent Flow Process */}
+            <div className="standby-process-flow">
+              <div className="process-step">
+                <span className="process-step-num">01</span>
+                <div className="process-step-body">
+                  <span className="process-label">FOTO TANDAN</span>
+                  <strong className="process-value empty">—</strong>
+                  <small className="process-note">Spesimen di pohon</small>
+                </div>
+              </div>
+
+              <div className="process-arrow" aria-hidden="true">→</div>
+
+              <div className="process-step">
+                <span className="process-step-num">02</span>
+                <div className="process-step-body">
+                  <span className="process-label">KEMATANGAN SAAT INI</span>
+                  <strong className="process-value empty">—</strong>
+                  <small className="process-note">Perkiraan dari foto</small>
+                </div>
+              </div>
+
+              <div className="process-arrow" aria-hidden="true">→</div>
+
+              <div className="process-step">
+                <span className="process-step-num">03</span>
+                <div className="process-step-body">
+                  <span className="process-label">DURASI PERJALANAN</span>
+                  <strong className="process-value empty">—</strong>
+                  <small className="process-note">Rute logistik darat</small>
+                </div>
+              </div>
+
+              <div className="process-arrow" aria-hidden="true">→</div>
+
+              <div className="process-step active">
+                <span className="process-step-num">04</span>
+                <div className="process-step-body">
+                  <span className="process-label">KEMATANGAN SAAT TIBA</span>
+                  <strong className="process-value" style={{ color: selectedMaturityInfo.color }}>
+                    Tingkat {targetMaturity}
+                  </strong>
+                  <small className="process-note" style={{ color: selectedMaturityInfo.color }}>
+                    Target: {selectedMaturityInfo.shortLabel}
+                  </small>
+                </div>
+              </div>
+            </div>
+
+            {/* Dominant Visual Signature: Standby Maturity Instrument */}
+            <div className="standby-instrument-block">
+              <div className="instrument-block-header">
+                <div>
+                  <h3 className="instrument-block-title">Skala kematangan Cavendish</h3>
+                  <p className="instrument-block-sub">Skala pembacaan kematangan 1–7 untuk perencanaan panen dan pengiriman</p>
+                </div>
+                <div className="instrument-active-pill" style={{ borderColor: selectedMaturityInfo.color }}>
+                  <span className="pill-dot" style={{ backgroundColor: selectedMaturityInfo.color }} />
+                  <span className="pill-text">Target: Tingkat {targetMaturity} / 7</span>
+                </div>
+              </div>
+
+              <div className="standby-track-wrap">
+                <MaturityInstrumentDisplay
+                  target={targetMaturity}
+                  size="large"
+                />
+              </div>
+            </div>
+
+            {/* Flattened Operational Guidance Band */}
+            <div className="operational-guidance-band">
+              <div className="guidance-col">
+                <div className="guidance-col-header">
+                  <CameraIcon size={18} weight="bold" className="guidance-icon-flat" />
+                  <h4>Panduan Foto Tandan</h4>
+                </div>
+                <p>Ambil foto 1 tandan utuh di pohon dengan pencahayaan alami siang hari. Hindari bayangan pekat atau sudut terlalu gelap untuk pembacaan terbaik.</p>
+              </div>
+
+              <div className="guidance-col-divider" aria-hidden="true" />
+
+              <div className="guidance-col">
+                <div className="guidance-col-header">
+                  <TruckIcon size={18} weight="bold" className="guidance-icon-flat" />
+                  <h4>Faktor Rute & Pematangan</h4>
+                </div>
+                <p>Durasi perjalanan truk langsung memengaruhi laju kematangan buah selama transit. PisGo menyesuaikan tanggal kirim agar buah tiba pada tingkat kematangan yang ditargetkan.</p>
+              </div>
+            </div>
+
+            <div className="standby-footer-tip">
+              <span>Lengkapi data formulir di sebelah kiri, kemudian klik <strong>Analisis Rencana Panen</strong> untuk memunculkan rekomendasi tanggal panen, pengiriman, dan verifikasi rute.</span>
+            </div>
+          </div>
+        </aside>
+      )}
 
       {result && <ResultView {...result} />}
     </section>
@@ -205,10 +341,22 @@ export function PredictionWorkflow() {
 }
 
 function DateField({ id, label, value, max, onChange, error, secondary = false }: { id: string; label: string; value: string; max: string; onChange: (value: string) => void; error?: string; secondary?: boolean }) {
+  function handleInputClick(event: React.MouseEvent<HTMLInputElement>) {
+    const input = event.currentTarget;
+    try {
+      input.showPicker?.();
+    } catch {
+      // showPicker fallback
+    }
+  }
+
   return (
     <div className="date-field" data-secondary={secondary}>
       <label htmlFor={id}>{label}</label>
-      <div className="date-input-wrap"><CalendarBlankIcon aria-hidden="true" size={18} /><input id={id} type="date" value={value} max={max} onChange={(event) => onChange(event.target.value)} className="field" data-error={Boolean(error)} /></div>
+      <div className="date-input-wrap">
+        <CalendarBlankIcon aria-hidden="true" size={18} />
+        <input id={id} type="date" value={value} max={max} onClick={handleInputClick} onChange={(event) => onChange(event.target.value)} className="field" data-error={Boolean(error)} />
+      </div>
       {error && <p role="alert" className="field-error">{error}</p>}
     </div>
   );

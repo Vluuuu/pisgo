@@ -10,26 +10,71 @@ type ImageUploadProps = {
   error?: string;
 };
 
+const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+
+function validateImageFile(file: File): string | null {
+  if (!ALLOWED_IMAGE_TYPES.has(file.type)) {
+    return "Format foto harus JPG, PNG, atau WebP.";
+  }
+  if (file.size > MAX_IMAGE_BYTES) {
+    return "Ukuran foto maksimal 10 MB.";
+  }
+  return null;
+}
+
 export function ImageUpload({ value, onChange, error }: ImageUploadProps) {
   const inputId = useId();
+  const [isDragging, setIsDragging] = useState(false);
+  const [validationError, setValidationError] = useState<string | null>(null);
+
+  function handleFile(file: File | null) {
+    if (!file) return;
+    const message = validateImageFile(file);
+    if (message) {
+      setValidationError(message);
+      return;
+    }
+    setValidationError(null);
+    onChange(file);
+  }
 
   return (
-    <div className="upload-field">
+    <div
+      className="upload-field"
+      onDragEnter={(event) => { event.preventDefault(); event.stopPropagation(); setIsDragging(true); }}
+      onDragOver={(event) => { event.preventDefault(); event.stopPropagation(); setIsDragging(true); }}
+      onDragLeave={(event) => { event.preventDefault(); event.stopPropagation(); setIsDragging(false); }}
+      onDrop={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setIsDragging(false);
+        handleFile(event.dataTransfer.files?.[0] ?? null);
+      }}
+    >
       <div className="field-heading">
-        <label id={`${inputId}-label`} htmlFor={inputId}>Photo</label>
-        <span>JPG, PNG, WebP · max. 10 MB</span>
+        <label id={`${inputId}-label`} htmlFor={inputId}>Foto Tandan di Pohon</label>
+        <span className="upload-spec-hint">JPG, PNG, WebP · maks. 10 MB</span>
       </div>
 
-      <div className="photo-stage" data-error={Boolean(error)}>
+      <div className="specimen-frame-stage" data-error={Boolean(error)} data-dragging={isDragging}>
+        {/* Inspection Corner Marks */}
+        <span className="frame-corner top-left" aria-hidden="true" />
+        <span className="frame-corner top-right" aria-hidden="true" />
+        <span className="frame-corner bottom-left" aria-hidden="true" />
+        <span className="frame-corner bottom-right" aria-hidden="true" />
+
         {value ? (
           <ImagePreview file={value} inputId={inputId} onRemove={() => onChange(null)} />
         ) : (
           <label className="photo-prompt" htmlFor={inputId}>
-            <CameraIcon aria-hidden="true" size={24} weight="regular" />
-            <span>
-              <strong>Select photo</strong>
-              <small>Clear banana bunch in even light</small>
-            </span>
+            <div className="prompt-icon-ring">
+              <CameraIcon aria-hidden="true" size={26} weight="bold" />
+            </div>
+            <div className="prompt-text-group">
+              <strong>{isDragging ? "Lepaskan foto tandan di sini" : "Pilih atau Tarik Foto Tandan"}</strong>
+              <small>Foto 1 tandan penuh, pencahayaan alami terang di kebun</small>
+            </div>
           </label>
         )}
 
@@ -39,12 +84,12 @@ export function ImageUpload({ value, onChange, error }: ImageUploadProps) {
           type="file"
           accept="image/jpeg,image/png,image/webp"
           aria-labelledby={`${inputId}-label`}
-          onClick={(event) => { event.currentTarget.value = ""; }}
-          onChange={(event) => onChange(event.target.files?.[0] ?? null)}
+          onClick={(event) => { event.currentTarget.value = ""; setValidationError(null); }}
+          onChange={(event) => handleFile(event.target.files?.[0] ?? null)}
         />
       </div>
 
-      {error && <p role="alert" className="field-error">{error}</p>}
+      {(error ?? validationError) && <p role="alert" className="field-error">{error ?? validationError}</p>}
     </div>
   );
 }
@@ -61,18 +106,39 @@ function ImagePreview({ file, inputId, onRemove }: { file: File; inputId: string
 
   return (
     <>
-      {preview && <Image src={preview} alt="Selected Cavendish banana bunch specimen" fill unoptimized className="photo-preview" sizes="(max-width: 860px) 100vw, 400px" />}
+      {preview && (
+        <Image
+          src={preview}
+          alt="Foto tandan pisang Cavendish terpilih"
+          fill
+          unoptimized
+          className="photo-preview"
+          sizes="(max-width: 860px) 100vw, 420px"
+        />
+      )}
       <div className="photo-caption">
-        <span><strong>{file.name}</strong><small>{formatFileSize(file.size)}</small></span>
-        <span className="photo-actions">
-          <label htmlFor={inputId}><UploadSimpleIcon aria-hidden="true" size={15} /> Replace</label>
-          <button type="button" onClick={onRemove}><XIcon aria-hidden="true" size={15} /> Remove</button>
-        </span>
+        <div className="caption-meta">
+          <span className="meta-tag">FOTO TANDAN</span>
+          <strong className="meta-filename">{file.name}</strong>
+          <small className="meta-size">{formatFileSize(file.size)}</small>
+        </div>
+        <div className="photo-actions">
+          <label htmlFor={inputId} className="action-btn replace">
+            <UploadSimpleIcon aria-hidden="true" size={14} weight="bold" />
+            <span>Ganti</span>
+          </label>
+          <button type="button" onClick={onRemove} className="action-btn remove">
+            <XIcon aria-hidden="true" size={14} weight="bold" />
+            <span>Hapus</span>
+          </button>
+        </div>
       </div>
     </>
   );
 }
 
 function formatFileSize(bytes: number): string {
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  if (bytes < 1024) return "< 1 KB";
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${new Intl.NumberFormat("id-ID", { maximumFractionDigits: 1 }).format(bytes / 1024 / 1024)} MB`;
 }
