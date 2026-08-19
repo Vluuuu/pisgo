@@ -133,7 +133,7 @@ export function ResultView({ prediction, schedule, route, origin, destination, t
             </span>
             <span className="metric-separator">·</span>
             <span className="metric-item">
-              <strong>{formatDuration(route.durationSeconds)}</strong> estimasi berkendara
+              <strong>{formatDuration(route.durationSeconds)}</strong> estimasi perjalanan
             </span>
           </div>
         </header>

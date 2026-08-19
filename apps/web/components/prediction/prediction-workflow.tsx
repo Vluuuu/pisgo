@@ -197,7 +197,7 @@ export function PredictionWorkflow() {
           </div>
           <div className="transport-mode-badge">
             <TruckIcon size={16} weight="bold" aria-hidden="true" />
-            <span>Moda Transportasi: Truk Ringan Box Tertutup (Estimasi tanpa jeda macet luar biasa)</span>
+            <span>Truk ringan · Estimasi kondisi lalu lintas umum</span>
           </div>
         </fieldset>
 
