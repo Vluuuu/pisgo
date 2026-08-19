@@ -1,4 +1,4 @@
-import { PathIcon } from "@phosphor-icons/react/dist/ssr";
+import Image from "next/image";
 import { PredictionWorkflow } from "@/components/prediction/prediction-workflow";
 
 export default function Home() {
@@ -8,8 +8,22 @@ export default function Home() {
 
       <header className="product-bar">
         <a className="brand" href="#top" aria-label="PisGo, kembali ke atas">
-          <PathIcon aria-hidden="true" size={18} weight="bold" />
-          <span className="brand-name">PisGo</span>
+          <Image
+            src="/brand/pisgo-mark.svg"
+            alt=""
+            width={32}
+            height={30}
+            className="brand-mark"
+            priority
+          />
+          <Image
+            src="/brand/pisgo-wordmark.svg"
+            alt="PisGo"
+            width={96}
+            height={31}
+            className="brand-wordmark"
+            priority
+          />
         </a>
         <p className="workspace-label">Perencanaan panen</p>
       </header>
@@ -17,8 +31,18 @@ export default function Home() {
       <PredictionWorkflow />
 
       <footer className="site-footer">
-        <p>PisGo · Operasional Cavendish</p>
-        <p>Prototipe: prediksi kematangan masih memakai model dasar, bukan model ML final.</p>
+        <div className="footer-brand">
+          <Image
+            src="/brand/pisgo-mark.svg"
+            alt=""
+            width={20}
+            height={19}
+            className="footer-mark"
+            aria-hidden="true"
+          />
+          <p>PisGo · Sistem Keputusan Panen & Logistik Pisang Cavendish</p>
+        </div>
+        <p className="footer-note">Prototipe pengembangan: prediksi kematangan masih menggunakan model dasar pengembangan.</p>
       </footer>
     </main>
   );
