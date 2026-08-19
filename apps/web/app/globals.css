@@ -56,7 +56,6 @@
 html { scroll-behavior: smooth; }
 body {
   margin: 0;
-  overflow-x: hidden;
   background: var(--canvas);
   color: var(--ink);
   font-family: var(--font-ibm-plex-sans), sans-serif;
@@ -333,9 +332,10 @@ a { color: inherit; }
   font-size: .8rem;
   font-weight: 600;
   color: var(--ink);
+  min-width: 0;
 }
 .date-field > label { width: fit-content; }
-.date-input-wrap, .location-input-wrap { position: relative; margin-top: .45rem; }
+.date-input-wrap, .location-input-wrap { position: relative; margin-top: .45rem; min-width: 0; width: 100%; }
 .date-input-wrap > svg, .location-input-wrap > svg {
   position: absolute;
   z-index: 1;
@@ -346,6 +346,8 @@ a { color: inherit; }
 }
 .field {
   width: 100%;
+  min-width: 0;
+  max-width: 100%;
   min-height: 2.85rem;
   padding: .65rem .85rem .65rem 2.45rem;
   border: 1px solid var(--line);
@@ -355,6 +357,12 @@ a { color: inherit; }
   font-size: .85rem;
   outline: 0;
   transition: border-color .15s ease, box-shadow .15s ease;
+}
+input[type="date"].field {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  display: block;
 }
 .field:hover { border-color: var(--line-strong); }
 .field:focus {
@@ -412,8 +420,10 @@ a { color: inherit; }
   gap: 1rem;
   align-items: baseline;
   margin-bottom: .45rem;
+  min-width: 0;
 }
-.upload-spec-hint { color: var(--muted); font-size: .68rem; font-family: var(--font-ibm-plex-mono), monospace; }
+.field-heading > * { min-width: 0; }
+.upload-spec-hint { color: var(--muted); font-size: .68rem; font-family: var(--font-ibm-plex-mono), monospace; overflow-wrap: anywhere; }
 
 .specimen-frame-stage {
   position: relative;
@@ -584,6 +594,7 @@ a { color: inherit; }
   width: 100%;
   padding-top: 2rem;
   padding-bottom: .35rem;
+  padding-inline: 1.5rem;
   user-select: none;
 }
 .maturity-track-container.display-mode {
