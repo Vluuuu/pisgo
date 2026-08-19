@@ -53,20 +53,28 @@ export function ImageUpload({ value, onChange, error }: ImageUploadProps) {
       }}
     >
       <div className="field-heading">
-        <label id={`${inputId}-label`} htmlFor={inputId}>Foto tandan</label>
-        <span>JPG, PNG, WebP · maks. 10 MB</span>
+        <label id={`${inputId}-label`} htmlFor={inputId}>Foto Tandan di Pohon</label>
+        <span className="upload-spec-hint">JPG, PNG, WebP · maks. 10 MB</span>
       </div>
 
-      <div className="photo-stage" data-error={Boolean(error)} data-dragging={isDragging}>
+      <div className="specimen-frame-stage" data-error={Boolean(error)} data-dragging={isDragging}>
+        {/* Inspection Corner Marks */}
+        <span className="frame-corner top-left" aria-hidden="true" />
+        <span className="frame-corner top-right" aria-hidden="true" />
+        <span className="frame-corner bottom-left" aria-hidden="true" />
+        <span className="frame-corner bottom-right" aria-hidden="true" />
+
         {value ? (
           <ImagePreview file={value} inputId={inputId} onRemove={() => onChange(null)} />
         ) : (
           <label className="photo-prompt" htmlFor={inputId}>
-            <CameraIcon aria-hidden="true" size={24} weight="regular" />
-            <span>
-              <strong>{isDragging ? "Lepaskan foto di sini" : "Seret foto tandan ke sini"}</strong>
-              <small>Pilih foto atau seret ke area ini</small>
-            </span>
+            <div className="prompt-icon-ring">
+              <CameraIcon aria-hidden="true" size={26} weight="bold" />
+            </div>
+            <div className="prompt-text-group">
+              <strong>{isDragging ? "Lepaskan foto tandan di sini" : "Pilih atau Tarik Foto Tandan"}</strong>
+              <small>Foto 1 tandan penuh, pencahayaan alami terang di kebun</small>
+            </div>
           </label>
         )}
 
@@ -98,13 +106,32 @@ function ImagePreview({ file, inputId, onRemove }: { file: File; inputId: string
 
   return (
     <>
-      {preview && <Image src={preview} alt="Foto tandan pisang Cavendish terpilih" fill unoptimized className="photo-preview" sizes="(max-width: 860px) 100vw, 400px" />}
+      {preview && (
+        <Image
+          src={preview}
+          alt="Foto tandan pisang Cavendish terpilih"
+          fill
+          unoptimized
+          className="photo-preview"
+          sizes="(max-width: 860px) 100vw, 420px"
+        />
+      )}
       <div className="photo-caption">
-        <span><strong>{file.name}</strong><small>{formatFileSize(file.size)}</small></span>
-        <span className="photo-actions">
-          <label htmlFor={inputId}><UploadSimpleIcon aria-hidden="true" size={15} /> Ganti</label>
-          <button type="button" onClick={onRemove}><XIcon aria-hidden="true" size={15} /> Hapus</button>
-        </span>
+        <div className="caption-meta">
+          <span className="meta-tag">FOTO TANDAN</span>
+          <strong className="meta-filename">{file.name}</strong>
+          <small className="meta-size">{formatFileSize(file.size)}</small>
+        </div>
+        <div className="photo-actions">
+          <label htmlFor={inputId} className="action-btn replace">
+            <UploadSimpleIcon aria-hidden="true" size={14} weight="bold" />
+            <span>Ganti</span>
+          </label>
+          <button type="button" onClick={onRemove} className="action-btn remove">
+            <XIcon aria-hidden="true" size={14} weight="bold" />
+            <span>Hapus</span>
+          </button>
+        </div>
       </div>
     </>
   );

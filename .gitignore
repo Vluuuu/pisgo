@@ -60,3 +60,6 @@ Thumbs.db
 /screenshots-after/
 /verification/
 /test-banana.png
+# Local visual verification
+/.screenshots/
+/desktop-*.png

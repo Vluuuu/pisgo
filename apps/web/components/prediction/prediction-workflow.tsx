@@ -1,10 +1,11 @@
 "use client";
 
-import { CalendarBlankIcon, SpinnerGapIcon } from "@phosphor-icons/react";
+import { CalendarBlankIcon, CameraIcon, ShieldCheckIcon, SpinnerGapIcon, TruckIcon } from "@phosphor-icons/react";
 import { useState } from "react";
 import { LocationAutocomplete } from "@/components/locations/location-autocomplete";
 import { ImageUpload } from "./image-upload";
 import { ResultView } from "./result-view";
+import { MATURITY_SPECTRUM, MaturityInstrumentControl, MaturityInstrumentDisplay } from "./maturity-instrument";
 import { daysBetween, todayIso } from "@/lib/dates";
 import { optimizeSchedule } from "@/lib/optimizer/baseline";
 import type { LocationSuggestion, RouteData } from "@/types/location";
@@ -21,15 +22,9 @@ type WorkflowResult = {
 
 type FormErrors = Partial<Record<"floweringDate" | "photoDate" | "image" | "targetMaturity" | "origin" | "destination", string>>;
 
-const maturityLabels: Record<number, string> = {
-  1: "Hijau matang",
-  2: "Matang hijau",
-  3: "Kuning hijau",
-  4: "Lebih hijau",
-  5: "Kuning",
-  6: "Kuning bintik",
-  7: "Terlalu matang",
-};
+export const maturityLabels: Record<number, string> = Object.fromEntries(
+  MATURITY_SPECTRUM.map((item) => [item.level, item.label])
+);
 
 export function PredictionWorkflow() {
   const today = todayIso();
@@ -46,6 +41,7 @@ export function PredictionWorkflow() {
 
   const daf = floweringDate && photoDate ? daysBetweenSafe(floweringDate, photoDate) : null;
   const busy = phase !== "idle";
+  const selectedMaturityInfo = MATURITY_SPECTRUM.find((m) => m.level === targetMaturity) ?? MATURITY_SPECTRUM[3];
 
   function validate(): FormErrors {
     const next: FormErrors = {};
@@ -124,12 +120,16 @@ export function PredictionWorkflow() {
     <section className="workspace" aria-label="Workspace analisis panen dan pengiriman">
       <form noValidate onSubmit={handleSubmit} className="control-rail" id="controls">
         <header className="rail-header">
-          <h1>Rencana panen baru</h1>
-          <p>Tentukan data buah, target kematangan, dan rute pengiriman.</p>
+          <div className="rail-header-eyebrow">
+            <span className="eyebrow-badge">Alur Kerja Keputusan</span>
+            <span className="eyebrow-rule" />
+          </div>
+          <h1>Rencana Panen Baru</h1>
+          <p>Tentukan parameter buah, target kematangan saat tiba di tujuan, dan rute pengiriman.</p>
         </header>
 
         <fieldset className="control-group fruit-controls">
-          <legend>Data buah</legend>
+          <legend><span className="section-number" aria-hidden="true">01</span>Data buah</legend>
           <DateField
             id="flowering-date"
             label="Tanggal berbunga"
@@ -140,11 +140,16 @@ export function PredictionWorkflow() {
           />
 
           {daf !== null && daf >= 0 && (
-            <p className="daf-inline" aria-live="polite">
-              <span>Usia buah</span><strong>{daf}</strong><small>hari setelah berbunga</small>
-            </p>
+            <div className="daf-inline" aria-live="polite">
+              <span className="daf-label">Usia buah terhitung:</span>
+              <strong className="daf-value">{daf}</strong>
+              <small className="daf-unit">hari setelah berbunga</small>
+            </div>
           )}
+        </fieldset>
 
+        <fieldset className="control-group specimen-controls">
+          <legend><span className="section-number" aria-hidden="true">02</span>Foto tandan</legend>
           <ImageUpload value={image} onChange={(file) => { setImage(file); setResult(null); setErrors((current) => ({ ...current, image: undefined })); }} error={errors.image} />
 
           <DateField
@@ -159,45 +164,176 @@ export function PredictionWorkflow() {
         </fieldset>
 
         <fieldset className="control-group maturity-group">
-          <legend className="sr-only">Target kematangan</legend>
-          <div className="maturity-heading">
-            <label htmlFor="target-maturity">Target kematangan</label>
-            <output htmlFor="target-maturity">{targetMaturity}<small>/7</small></output>
-          </div>
-          <div className="maturity-extremes" aria-hidden="true"><span>Lebih hijau</span><span>Lebih kuning</span></div>
-          <input
+          <legend><span className="section-number" aria-hidden="true">03</span>Target</legend>
+
+          <MaturityInstrumentControl
             id="target-maturity"
-            type="range"
-            min="1"
-            max="7"
-            step="1"
             value={targetMaturity}
-            onChange={(event) => { setTargetMaturity(Number(event.target.value)); setResult(null); }}
-            className="maturity-range"
-            aria-valuetext={`${targetMaturity}, ${maturityLabels[targetMaturity]}`}
+            onChange={(val) => {
+              setTargetMaturity(val);
+              setResult(null);
+            }}
           />
+
           {errors.targetMaturity && <p role="alert" className="field-error">{errors.targetMaturity}</p>}
         </fieldset>
 
         <fieldset className="control-group route-controls">
-          <legend>Rute</legend>
+          <legend><span className="section-number" aria-hidden="true">04</span>Perjalanan</legend>
           <div className="route-stack">
-            <div className="route-field"><LocationAutocomplete label="Asal" value={origin} onChange={changeOrigin} placeholder="Kebun, rumah kemas, atau kota" />{errors.origin && <p role="alert" className="field-error">{errors.origin}</p>}</div>
-            <div className="route-line-input" aria-hidden="true" />
-            <div className="route-field"><LocationAutocomplete label="Tujuan" value={destination} onChange={changeDestination} placeholder="Pasar, pelabuhan, atau kota" />{errors.destination && <p role="alert" className="field-error">{errors.destination}</p>}</div>
+            <div className="route-field">
+              <LocationAutocomplete label="Asal" value={origin} onChange={changeOrigin} placeholder="Kebun, rumah kemas, atau kota asal" />
+              {errors.origin && <p role="alert" className="field-error">{errors.origin}</p>}
+            </div>
+            <div className="route-connector-line" aria-hidden="true">
+              <span className="connector-dot origin" />
+              <span className="connector-line" />
+              <span className="connector-dot dest" />
+            </div>
+            <div className="route-field">
+              <LocationAutocomplete label="Tujuan" value={destination} onChange={changeDestination} placeholder="Pasar induk, pelabuhan, atau kota tujuan" />
+              {errors.destination && <p role="alert" className="field-error">{errors.destination}</p>}
+            </div>
           </div>
-          <p className="transport-mode">Truk ringan <span aria-hidden="true">·</span> Estimasi tanpa kemacetan</p>
+          <div className="transport-mode-badge">
+            <TruckIcon size={16} weight="bold" aria-hidden="true" />
+            <span>Moda Transportasi: Truk Ringan Box Tertutup (Estimasi tanpa jeda macet luar biasa)</span>
+          </div>
         </fieldset>
 
         {error && <div role="alert" className="analysis-error">{error}</div>}
 
         <div className="analysis-command">
-          <p className={busy ? "analysis-status" : "sr-only"} aria-live="polite">{phase === "routing" ? "Menghitung rute…" : phase === "predicting" ? "Menganalisis buah…" : ""}</p>
+          <p className={busy ? "analysis-status" : "sr-only"} aria-live="polite">
+            {phase === "routing" ? "Menghitung jarak dan durasi rute…" : phase === "predicting" ? "Menganalisis kematangan tandan buah…" : ""}
+          </p>
           <button type="submit" disabled={busy} className="analyze-button">
-            {busy ? <><SpinnerGapIcon className="spin" aria-hidden="true" size={19} />{phase === "routing" ? "Menghitung rute" : "Menganalisis buah"}</> : "Analisis rencana panen"}
+            {busy ? (
+              <>
+                <SpinnerGapIcon className="spin" aria-hidden="true" size={20} />
+                <span>{phase === "routing" ? "Menghitung Rute Logistik…" : "Menganalisis Kematangan Buah…"}</span>
+              </>
+            ) : (
+              <>
+                <ShieldCheckIcon size={20} weight="bold" aria-hidden="true" />
+                <span>Analisis Rencana Panen</span>
+              </>
+            )}
           </button>
         </div>
       </form>
+
+      {!result && (
+        <aside className="standby-instrument" aria-label="Perencanaan kematangan & pengiriman">
+          <div className="standby-canvas">
+            <header className="standby-header">
+              <div className="standby-tag">
+                <span className="tag-pulse" />
+                <span>PERENCANAAN KEMATANGAN & PENGIRIMAN</span>
+              </div>
+              <h2>Alur Pematangan & Logistik</h2>
+              <p className="standby-lead">
+                PisGo membaca kematangan tandan dari foto spesimen kebun, memetakan posisinya pada skala kematangan Cavendish (1–7), lalu memproyeksikan durasi transit untuk menetapkan jadwal panen dan pengiriman yang tepat.
+              </p>
+            </header>
+
+            {/* Standby Coherent Flow Process */}
+            <div className="standby-process-flow">
+              <div className="process-step">
+                <span className="process-step-num">01</span>
+                <div className="process-step-body">
+                  <span className="process-label">FOTO TANDAN</span>
+                  <strong className="process-value empty">—</strong>
+                  <small className="process-note">Spesimen di pohon</small>
+                </div>
+              </div>
+
+              <div className="process-arrow" aria-hidden="true">→</div>
+
+              <div className="process-step">
+                <span className="process-step-num">02</span>
+                <div className="process-step-body">
+                  <span className="process-label">KEMATANGAN SAAT INI</span>
+                  <strong className="process-value empty">—</strong>
+                  <small className="process-note">Perkiraan dari foto</small>
+                </div>
+              </div>
+
+              <div className="process-arrow" aria-hidden="true">→</div>
+
+              <div className="process-step">
+                <span className="process-step-num">03</span>
+                <div className="process-step-body">
+                  <span className="process-label">DURASI PERJALANAN</span>
+                  <strong className="process-value empty">—</strong>
+                  <small className="process-note">Rute logistik darat</small>
+                </div>
+              </div>
+
+              <div className="process-arrow" aria-hidden="true">→</div>
+
+              <div className="process-step active">
+                <span className="process-step-num">04</span>
+                <div className="process-step-body">
+                  <span className="process-label">KEMATANGAN SAAT TIBA</span>
+                  <strong className="process-value" style={{ color: selectedMaturityInfo.color }}>
+                    Tingkat {targetMaturity}
+                  </strong>
+                  <small className="process-note" style={{ color: selectedMaturityInfo.color }}>
+                    Target: {selectedMaturityInfo.shortLabel}
+                  </small>
+                </div>
+              </div>
+            </div>
+
+            {/* Dominant Visual Signature: Standby Maturity Instrument */}
+            <div className="standby-instrument-block">
+              <div className="instrument-block-header">
+                <div>
+                  <h3 className="instrument-block-title">Skala kematangan Cavendish</h3>
+                  <p className="instrument-block-sub">Skala pembacaan kematangan 1–7 untuk perencanaan panen dan pengiriman</p>
+                </div>
+                <div className="instrument-active-pill" style={{ borderColor: selectedMaturityInfo.color }}>
+                  <span className="pill-dot" style={{ backgroundColor: selectedMaturityInfo.color }} />
+                  <span className="pill-text">Target: Tingkat {targetMaturity} / 7</span>
+                </div>
+              </div>
+
+              <div className="standby-track-wrap">
+                <MaturityInstrumentDisplay
+                  target={targetMaturity}
+                  size="large"
+                />
+              </div>
+            </div>
+
+            {/* Flattened Operational Guidance Band */}
+            <div className="operational-guidance-band">
+              <div className="guidance-col">
+                <div className="guidance-col-header">
+                  <CameraIcon size={18} weight="bold" className="guidance-icon-flat" />
+                  <h4>Panduan Foto Tandan</h4>
+                </div>
+                <p>Ambil foto 1 tandan utuh di pohon dengan pencahayaan alami siang hari. Hindari bayangan pekat atau sudut terlalu gelap untuk pembacaan terbaik.</p>
+              </div>
+
+              <div className="guidance-col-divider" aria-hidden="true" />
+
+              <div className="guidance-col">
+                <div className="guidance-col-header">
+                  <TruckIcon size={18} weight="bold" className="guidance-icon-flat" />
+                  <h4>Faktor Rute & Pematangan</h4>
+                </div>
+                <p>Durasi perjalanan truk langsung memengaruhi laju kematangan buah selama transit. PisGo menyesuaikan tanggal kirim agar buah tiba pada tingkat kematangan yang ditargetkan.</p>
+              </div>
+            </div>
+
+            <div className="standby-footer-tip">
+              <span>Lengkapi data formulir di sebelah kiri, kemudian klik <strong>Analisis Rencana Panen</strong> untuk memunculkan rekomendasi tanggal panen, pengiriman, dan verifikasi rute.</span>
+            </div>
+          </div>
+        </aside>
+      )}
 
       {result && <ResultView {...result} />}
     </section>
@@ -210,7 +346,7 @@ function DateField({ id, label, value, max, onChange, error, secondary = false }
     try {
       input.showPicker?.();
     } catch {
-      // showPicker can throw (e.g. missing user activation); native click behavior remains.
+      // showPicker fallback
     }
   }
 
