@@ -63,6 +63,64 @@ body {
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;
 }
+
+/* -------------------------------------------------------------
+   DESKTOP BANANA BRANDED CURSOR
+   ------------------------------------------------------------- */
+@media (hover: hover) and (pointer: fine) {
+  body,
+  .app-shell,
+  .workspace,
+  .control-rail,
+  .standby-instrument,
+  .standby-canvas,
+  .result-workspace,
+  .recommendation,
+  .maturity-instrument-card,
+  .standby-instrument-block,
+  .site-footer {
+    cursor: url("/brand/banana-cursor.svg") 3 3, default;
+  }
+
+  /* Preserve standard interactive cursors */
+  input[type="text"],
+  input[type="number"],
+  input[type="date"],
+  textarea,
+  .location-input,
+  [contenteditable="true"] {
+    cursor: text;
+  }
+
+  button,
+  a,
+  label,
+  select,
+  input[type="range"],
+  input[type="file"],
+  input[type="checkbox"],
+  input[type="radio"],
+  .field,
+  .action-btn,
+  .photo-prompt,
+  .pick-on-map-btn,
+  .analyze-button,
+  .manual-picker-locate-btn,
+  .manual-picker-close-btn,
+  .manual-picker-cancel-btn,
+  .manual-picker-confirm-btn,
+  .location-results li {
+    cursor: pointer;
+  }
+
+  .leaflet-container,
+  .leaflet-interactive,
+  .manual-picker-leaflet-map,
+  .route-map {
+    cursor: grab;
+  }
+}
+
 button, input { font: inherit; }
 button { color: inherit; }
 a { color: inherit; }
@@ -109,7 +167,6 @@ a { color: inherit; }
   height: 3.85rem;
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 1.5rem;
   padding: 0 1.75rem;
   border-bottom: 1px solid var(--line);
@@ -589,12 +646,16 @@ input[type="date"].field {
 .maturity-desc-text { color: var(--muted); }
 
 /* Unified Continuous Ripeness Track */
+:root {
+  --maturity-rail-safe-inset: 42px;
+  --maturity-thumb-width: 14px;
+}
+
 .maturity-track-container {
   position: relative;
   width: 100%;
   padding-top: 2rem;
   padding-bottom: .35rem;
-  padding-inline: 1.5rem;
   user-select: none;
 }
 .maturity-track-container.display-mode {
@@ -611,9 +672,11 @@ input[type="date"].field {
   position: relative;
   width: 100%;
   height: 2.35rem;
+  padding-inline: var(--maturity-rail-safe-inset);
   border-radius: 6px;
   border: 1px solid rgba(0, 0, 0, 0.15);
   box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.2);
+  box-sizing: border-box;
   background: linear-gradient(
     90deg,
     var(--maturity-1) 0%,
@@ -631,6 +694,13 @@ input[type="date"].field {
 }
 .maturity-track-container[data-size="large"] .maturity-continuous-track {
   height: 2.85rem;
+}
+
+/* Inner Usable Rail */
+.maturity-track-rail {
+  position: relative;
+  width: 100%;
+  height: 100%;
 }
 
 /* 7 Semantic Numbers and Tick Dividers */
@@ -712,7 +782,7 @@ input[type="date"].field {
 }
 .target-marker-thumb {
   flex: 1;
-  width: 14px;
+  width: var(--maturity-thumb-width);
   border-radius: 3px;
   border: 2px solid #ffffff;
   box-shadow: 0 0 0 1px var(--ink), 0 2px 6px rgba(0, 0, 0, 0.35);
@@ -722,8 +792,8 @@ input[type="date"].field {
 .maturity-native-range-slider {
   position: absolute;
   bottom: .35rem;
-  left: 0;
-  width: 100%;
+  left: var(--maturity-rail-safe-inset);
+  width: calc(100% - (var(--maturity-rail-safe-inset) * 2));
   height: 2.35rem;
   margin: 0;
   opacity: 0;
@@ -773,6 +843,45 @@ input[type="date"].field {
   pointer-events: none;
   z-index: 3;
 }
+.track-display-marker.current {
+  top: -4.65rem;
+  z-index: 5;
+}
+.track-display-marker.target {
+  top: -3.15rem;
+  z-index: 4;
+}
+.track-display-marker.arrival {
+  top: -1.65rem;
+  z-index: 3;
+}
+.display-marker-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: .25rem;
+  padding: .15rem .45rem;
+  border-radius: 3px;
+  white-space: nowrap;
+  font-family: var(--font-ibm-plex-sans-condensed), sans-serif;
+  font-size: .62rem;
+  font-weight: 700;
+  letter-spacing: .04em;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+}
+.display-marker-tag.current { background: var(--ink); color: #ffffff; }
+.display-marker-tag.target { background: var(--accent); color: #ffffff; }
+.display-marker-tag.arrival { background: var(--gold-arrival); color: #ffffff; }
+.marker-icon { font-size: .55rem; line-height: 1; }
+.display-marker-line {
+  flex: 1;
+  width: 2px;
+  background: currentColor;
+  opacity: 0.9;
+  margin-top: 2px;
+}
+.display-marker-line.current { background: var(--ink); }
+.display-marker-line.target { background: var(--accent); }
+.display-marker-line.arrival { background: var(--gold-arrival); }
 .track-display-marker.current {
   top: -4.65rem;
   z-index: 5;

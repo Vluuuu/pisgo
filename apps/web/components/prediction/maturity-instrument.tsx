@@ -108,41 +108,42 @@ export function MaturityInstrumentControl({
 
       {/* Unified Ripeness Track */}
       <div className="maturity-track-container" data-size={size}>
-        <div
-          ref={trackRef}
-          className="maturity-continuous-track interactive"
-          onPointerDown={handlePointerDown}
-          role="presentation"
-        >
-          {/* 7 Semantic Numbers and Tick Dividers */}
-          <div className="track-ticks-layer" aria-hidden="true">
-            {MATURITY_SPECTRUM.map((item) => {
-              const pct = levelToPercent(item.level);
-              return (
-                <div
-                  key={item.level}
-                  className="track-tick-node"
-                  style={{ left: `${pct}%` }}
-                >
-                  <span className="tick-mark" />
-                  <span className="tick-number">{item.level}</span>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Active Target Indicator Marker */}
+        <div className="maturity-continuous-track interactive" role="presentation">
           <div
-            className="track-target-marker"
-            style={{ left: `${targetPercent}%` }}
-            aria-hidden="true"
+            ref={trackRef}
+            className="maturity-track-rail"
+            onPointerDown={handlePointerDown}
           >
-            <div className="target-marker-tag">
-              <span className="target-marker-glyph">■</span>
-              <span className="target-marker-label">TARGET</span>
+            {/* 7 Semantic Numbers and Tick Dividers */}
+            <div className="track-ticks-layer" aria-hidden="true">
+              {MATURITY_SPECTRUM.map((item) => {
+                const pct = levelToPercent(item.level);
+                return (
+                  <div
+                    key={item.level}
+                    className="track-tick-node"
+                    style={{ left: `${pct}%` }}
+                  >
+                    <span className="tick-mark" />
+                    <span className="tick-number">{item.level}</span>
+                  </div>
+                );
+              })}
             </div>
-            <div className="target-marker-pointer" />
-            <div className="target-marker-thumb" style={{ backgroundColor: selectedInfo.color }} />
+
+            {/* Active Target Indicator Marker */}
+            <div
+              className="track-target-marker"
+              style={{ left: `${targetPercent}%` }}
+              aria-hidden="true"
+            >
+              <div className="target-marker-tag">
+                <span className="target-marker-glyph">■</span>
+                <span className="target-marker-label">TARGET</span>
+              </div>
+              <div className="target-marker-pointer" />
+              <div className="target-marker-thumb" style={{ backgroundColor: selectedInfo.color }} />
+            </div>
           </div>
         </div>
 
@@ -167,7 +168,7 @@ export function MaturityInstrumentControl({
           <span>Hijau</span>
         </span>
         <span className="track-center-label">
-          <span>Pematangan</span>
+          <span>Kematangan</span>
         </span>
         <span className="track-side-label end">
           <span>Kuning</span>
@@ -195,62 +196,64 @@ export function MaturityInstrumentDisplay({
   return (
     <div className="maturity-track-container display-mode" data-size={size}>
       <div className="maturity-continuous-track display-track" role="presentation">
-        <div className="track-ticks-layer" aria-hidden="true">
-          {MATURITY_SPECTRUM.map((item) => {
-            const pct = levelToPercent(item.level);
-            return (
-              <div
-                key={item.level}
-                className="track-tick-node"
-                style={{ left: `${pct}%` }}
-              >
-                <span className="tick-mark" />
-                <span className="tick-number">{item.level}</span>
+        <div className="maturity-track-rail">
+          <div className="track-ticks-layer" aria-hidden="true">
+            {MATURITY_SPECTRUM.map((item) => {
+              const pct = levelToPercent(item.level);
+              return (
+                <div
+                  key={item.level}
+                  className="track-tick-node"
+                  style={{ left: `${pct}%` }}
+                >
+                  <span className="tick-mark" />
+                  <span className="tick-number">{item.level}</span>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Semantic markers on fixed lanes prevent overlap without runtime layout logic. */}
+          {currentPct !== undefined && (
+            <div
+              className="track-display-marker current"
+              style={{ left: `${currentPct}%` }}
+              title={`Saat Ini: Tingkat ${currentLevel?.toFixed(1)}`}
+            >
+              <div className="display-marker-tag current">
+                <span className="marker-icon">▼</span>
+                <span className="marker-txt">SAAT INI</span>
               </div>
-            );
-          })}
-        </div>
-
-        {/* Semantic markers on fixed lanes prevent overlap without runtime layout logic. */}
-        {currentPct !== undefined && (
-          <div
-            className="track-display-marker current"
-            style={{ left: `${currentPct}%` }}
-            title={`Saat Ini: Tingkat ${currentLevel?.toFixed(1)}`}
-          >
-            <div className="display-marker-tag current">
-              <span className="marker-icon">▼</span>
-              <span className="marker-txt">SAAT INI</span>
+              <div className="display-marker-line current" />
             </div>
-            <div className="display-marker-line current" />
-          </div>
-        )}
+          )}
 
-        <div
-          className="track-display-marker target"
-          style={{ left: `${targetPct}%` }}
-          title={`Target: Tingkat ${targetLevel}`}
-        >
-          <div className="display-marker-tag target">
-            <span className="marker-icon">■</span>
-            <span className="marker-txt">TARGET</span>
-          </div>
-          <div className="display-marker-line target" />
-        </div>
-
-        {arrivalPct !== undefined && (
           <div
-            className="track-display-marker arrival"
-            style={{ left: `${arrivalPct}%` }}
-            title={`Saat Tiba: Tingkat ${arrivalLevel?.toFixed(1)}`}
+            className="track-display-marker target"
+            style={{ left: `${targetPct}%` }}
+            title={`Target: Tingkat ${targetLevel}`}
           >
-            <div className="display-marker-tag arrival">
-              <span className="marker-icon">◆</span>
-              <span className="marker-txt">SAAT TIBA</span>
+            <div className="display-marker-tag target">
+              <span className="marker-icon">■</span>
+              <span className="marker-txt">TARGET</span>
             </div>
-            <div className="display-marker-line arrival" />
+            <div className="display-marker-line target" />
           </div>
-        )}
+
+          {arrivalPct !== undefined && (
+            <div
+              className="track-display-marker arrival"
+              style={{ left: `${arrivalPct}%` }}
+              title={`Saat Tiba: Tingkat ${arrivalLevel?.toFixed(1)}`}
+            >
+              <div className="display-marker-tag arrival">
+                <span className="marker-icon">◆</span>
+                <span className="marker-txt">SAAT TIBA</span>
+              </div>
+              <div className="display-marker-line arrival" />
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="maturity-track-labels" aria-hidden="true">
@@ -259,7 +262,7 @@ export function MaturityInstrumentDisplay({
           <span>Hijau</span>
         </span>
         <span className="track-center-label">
-          <span>Pematangan</span>
+          <span>Kematangan</span>
         </span>
         <span className="track-side-label end">
           <span>Kuning</span>
