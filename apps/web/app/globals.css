@@ -863,6 +863,22 @@ input[type="date"].field {
 .location-results li span { display: block; font-size: .78rem; font-weight: 600; color: var(--ink); }
 .location-results li small { display: block; margin-top: .15rem; color: var(--muted); font-size: .7rem; }
 .location-status { margin: 0; padding: .85rem; color: var(--muted); font-size: .75rem; }
+.foursquare-attribution {
+  padding: .35rem .75rem;
+  border-top: 1px solid var(--line);
+  background: var(--surface-muted);
+  color: var(--muted);
+  font-size: .65rem;
+  font-family: var(--font-ibm-plex-sans-condensed), sans-serif;
+  letter-spacing: .04em;
+}
+.foursquare-attribution-standalone {
+  margin-top: .35rem;
+  color: var(--muted);
+  font-size: .65rem;
+  font-family: var(--font-ibm-plex-sans-condensed), sans-serif;
+  letter-spacing: .04em;
+}
 
 .transport-mode-badge {
   display: inline-flex;
