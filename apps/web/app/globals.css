@@ -79,7 +79,7 @@ body {
   .maturity-instrument-card,
   .standby-instrument-block,
   .site-footer {
-    cursor: url("/brand/banana-cursor.svg") 3 3, default;
+    cursor: url("/brand/pisgo-mark.svg") 0 0, default;
   }
 
   /* Preserve standard interactive cursors */
