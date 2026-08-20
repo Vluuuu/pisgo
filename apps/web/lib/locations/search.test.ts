@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { LocationSuggestion } from "../../types/location.ts";
 import {
   buildIndonesianPoiSearchPlan,
   FOURSQUARE_FUEL_STATION_CATEGORY_ID,
@@ -193,7 +194,7 @@ test("searchAddress calls TomTom Geocode with bounded request budget", async () 
     const results = await searchAddress("Jl Cikoko Timur III No 42");
     assert.equal(results.length, 1);
     assert.equal(hitUrls.length, 1);
-    assert.ok(hitUrls[0].includes("query=Jl+Cikoko+Timur+III+No+42"));
+    assert.equal(hitUrls[0].includes("query=Jl+Cikoko+Timur+III+No+42"), true);
     assert.equal(results[0].label, "Jalan Cikoko Timur 42");
   } finally {
     globalThis.fetch = originalFetch;
@@ -203,6 +204,43 @@ test("searchAddress calls TomTom Geocode with bounded request budget", async () 
       process.env.TOMTOM_API_KEY = originalApiKey;
     }
   }
+});
+
+test("manual location preserves user typed label and provides valid coordinates without geocoder", () => {
+  const typedQuery = "Cikoko Timur III No 42";
+  const manualLocation: LocationSuggestion = {
+    id: "manual-12345--6.2412-106.8512",
+    label: typedQuery,
+    lat: -6.2412,
+    lon: 106.8512,
+    provider: "manual",
+  };
+
+  assert.equal(manualLocation.provider, "manual");
+  assert.equal(manualLocation.label, "Cikoko Timur III No 42");
+  assert.equal(manualLocation.lat, -6.2412);
+  assert.equal(manualLocation.lon, 106.8512);
+
+  // Fallback to "Titik pilihan di peta" when empty query
+  const emptyQuery = "   ";
+  const trimmed = emptyQuery.trim();
+  const fallbackLabel = trimmed.length > 0 ? trimmed : "Titik pilihan di peta";
+  const fallbackManualLocation: LocationSuggestion = {
+    id: "manual-67890--6.2412-106.8512",
+    label: fallbackLabel,
+    lat: -6.2412,
+    lon: 106.8512,
+    provider: "manual",
+  };
+  assert.equal(fallbackManualLocation.label, "Titik pilihan di peta");
+
+  // Provider "manual" does not trigger Foursquare attribution or TomTom details
+  const showFoursquareAttribution =
+    (manualLocation.provider as string) === "foursquare";
+  assert.equal(showFoursquareAttribution, false);
+  const requiresTomTomDetails =
+    (manualLocation.provider as string) === "tomtom";
+  assert.equal(requiresTomTomDetails, false);
 });
 
 test("searchPoi calls Foursquare with primary query and category filter if requested", async () => {

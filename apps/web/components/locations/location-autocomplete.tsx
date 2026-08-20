@@ -1,6 +1,6 @@
 "use client";
 
-import { MapPinIcon, SpinnerGapIcon } from "@phosphor-icons/react";
+import { MapPinIcon, MapTrifoldIcon, SpinnerGapIcon } from "@phosphor-icons/react";
 import { useEffect, useId, useRef, useState } from "react";
 import type { LocationFlowLinkage, LocationSuggestion } from "@/types/location";
 
@@ -22,6 +22,7 @@ type LocationAutocompleteProps = {
   value: LocationSuggestion | null;
   onChange: (value: LocationSuggestion | null) => void;
   placeholder: string;
+  onOpenMapPicker?: (currentQuery: string) => void;
 };
 
 function generateUUIDv4(): string {
@@ -42,10 +43,17 @@ function generateUUIDv4(): string {
   });
 }
 
-export function LocationAutocomplete({ label, value, onChange, placeholder }: LocationAutocompleteProps) {
+export function LocationAutocomplete({
+  label,
+  value,
+  onChange,
+  placeholder,
+  onOpenMapPicker,
+}: LocationAutocompleteProps) {
   const inputId = useId();
   const listboxId = useId();
   const [query, setQuery] = useState(value?.label ?? "");
+  const [prevValue, setPrevValue] = useState<LocationSuggestion | null>(value);
   const [results, setResults] = useState<SuggestionItem[]>([]);
   const [status, setStatus] = useState<"idle" | "loading" | "ready" | "empty" | "error">("idle");
   const [open, setOpen] = useState(false);
@@ -54,6 +62,13 @@ export function LocationAutocomplete({ label, value, onChange, placeholder }: Lo
   const sessionIdRef = useRef<string>("");
   const requestGenerationRef = useRef(0);
   const requestControllerRef = useRef<AbortController | null>(null);
+
+  if (value !== prevValue) {
+    setPrevValue(value);
+    if (value) {
+      setQuery(value.label);
+    }
+  }
 
   function getSessionId(): string {
     if (!sessionIdRef.current) {
@@ -207,7 +222,20 @@ export function LocationAutocomplete({ label, value, onChange, placeholder }: Lo
 
   return (
     <div className="location-field">
-      <label htmlFor={inputId}>{label}</label>
+      <div className="location-field-header">
+        <label htmlFor={inputId}>{label}</label>
+        {onOpenMapPicker && (
+          <button
+            type="button"
+            className="pick-on-map-btn"
+            onClick={() => onOpenMapPicker(query)}
+            aria-label={`Pilih ${label.toLowerCase()} di peta`}
+          >
+            <MapTrifoldIcon size={14} weight="bold" aria-hidden="true" />
+            <span>Pilih di peta</span>
+          </button>
+        )}
+      </div>
       <div className="location-input-wrap">
         <MapPinIcon aria-hidden="true" size={18} weight="regular" />
         <input
