@@ -4,6 +4,7 @@ import { CalendarBlankIcon, CameraIcon, ShieldCheckIcon, SpinnerGapIcon, TruckIc
 import { useRef, useState } from "react";
 import { LocationAutocomplete } from "@/components/locations/location-autocomplete";
 import { ManualLocationPickerLoader } from "@/components/map/manual-location-picker-loader";
+import { VehicleModeIcon } from "@/components/vehicles/vehicle-mode-icon";
 import { ImageUpload } from "./image-upload";
 import { ResultView } from "./result-view";
 import { MATURITY_SPECTRUM, MaturityInstrumentControl, MaturityInstrumentDisplay } from "./maturity-instrument";
@@ -294,7 +295,7 @@ export function PredictionWorkflow() {
         </fieldset>
 
         <fieldset className="control-group specimen-controls">
-          <legend><span className="section-number" aria-hidden="true">02</span>Foto tandan</legend>
+          <legend><span className="section-number" aria-hidden="true">02</span>Foto pisang</legend>
           <ImageUpload value={image} onChange={(file) => { setImage(file); setResult(null); setErrors((current) => ({ ...current, image: undefined })); }} error={errors.image} />
 
           <DateField
@@ -356,7 +357,7 @@ export function PredictionWorkflow() {
           <div className="vehicle-selector-group">
             <label htmlFor="vehicle-mode-select" className="vehicle-select-label">Kendaraan</label>
             <div className="vehicle-select-wrap">
-              <TruckIcon size={18} weight="bold" aria-hidden="true" />
+              <VehicleModeIcon mode={vehicleMode} size={18} weight="bold" aria-hidden="true" />
               <select
                 id="vehicle-mode-select"
                 value={vehicleMode}
@@ -414,9 +415,9 @@ export function PredictionWorkflow() {
                 <span className="tag-pulse" />
                 <span>PERENCANAAN KEMATANGAN & PENGIRIMAN</span>
               </div>
-              <h2>Alur Pematangan & Logistik</h2>
+              <h2>Alur Kematangan & Logistik</h2>
               <p className="standby-lead">
-                PisGo membaca kematangan tandan dari foto spesimen kebun, memetakan posisinya pada skala kematangan Cavendish (1–7), lalu memproyeksikan durasi transit untuk menetapkan jadwal panen dan pengiriman yang tepat.
+                PisGo membaca kematangan pisang dari foto spesimen kebun, memetakan posisinya pada skala kematangan Cavendish (1–7), lalu memproyeksikan durasi transit untuk menetapkan jadwal panen dan pengiriman yang tepat.
               </p>
             </header>
 
@@ -425,7 +426,7 @@ export function PredictionWorkflow() {
               <div className="process-step">
                 <span className="process-step-num">01</span>
                 <div className="process-step-body">
-                  <span className="process-label">FOTO TANDAN</span>
+                  <span className="process-label">FOTO PISANG</span>
                   <strong className="process-value empty">—</strong>
                   <small className="process-note">Spesimen di pohon</small>
                 </div>
@@ -495,7 +496,7 @@ export function PredictionWorkflow() {
               <div className="guidance-col">
                 <div className="guidance-col-header">
                   <CameraIcon size={18} weight="bold" className="guidance-icon-flat" />
-                  <h4>Panduan Foto Tandan</h4>
+                  <h4>Panduan Foto Pisang</h4>
                 </div>
                 <p>Ambil foto 1 tandan utuh di pohon dengan pencahayaan alami siang hari. Hindari bayangan pekat atau sudut terlalu gelap untuk pembacaan terbaik.</p>
               </div>
@@ -505,7 +506,7 @@ export function PredictionWorkflow() {
               <div className="guidance-col">
                 <div className="guidance-col-header">
                   <TruckIcon size={18} weight="bold" className="guidance-icon-flat" />
-                  <h4>Faktor Rute & Pematangan</h4>
+                  <h4>Faktor Rute & Kematangan</h4>
                 </div>
                 <p>Durasi perjalanan truk langsung memengaruhi laju kematangan buah selama transit. PisGo menyesuaikan tanggal kirim agar buah tiba pada tingkat kematangan yang ditargetkan.</p>
               </div>

@@ -1,7 +1,8 @@
 "use client";
 
-import { CheckCircleIcon, FlaskIcon, TruckIcon, WarningCircleIcon } from "@phosphor-icons/react";
+import { CheckCircleIcon, FlaskIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { RouteMapLoader } from "@/components/map/route-map-loader";
+import { VehicleModeIcon } from "@/components/vehicles/vehicle-mode-icon";
 import { formatDecisionDate, formatDistance, formatDuration, formatMaturity } from "@/lib/format";
 import { MATURITY_SPECTRUM, MaturityInstrumentDisplay } from "./maturity-instrument";
 import { ROUTING_VEHICLE_MODES } from "@/types/location";
@@ -131,7 +132,7 @@ export function ResultView({ prediction, schedule, route, origin, destination, t
           </div>
           <div className="route-metrics">
             <span className="metric-item">
-              <TruckIcon size={16} weight="bold" />
+              <VehicleModeIcon mode={vehicleMode ?? "light_truck"} size={16} weight="bold" />
               <strong>{formatDistance(route.distanceMeters)}</strong>
             </span>
             <span className="metric-separator">·</span>

@@ -25,7 +25,6 @@ export default function Home() {
             priority
           />
         </a>
-        <p className="workspace-label">Perencanaan panen</p>
       </header>
 
       <PredictionWorkflow />

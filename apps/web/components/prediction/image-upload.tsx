@@ -53,7 +53,7 @@ export function ImageUpload({ value, onChange, error }: ImageUploadProps) {
       }}
     >
       <div className="field-heading">
-        <label id={`${inputId}-label`} htmlFor={inputId}>Foto Tandan di Pohon</label>
+        <label id={`${inputId}-label`} htmlFor={inputId}>Foto Pisang di Pohon</label>
         <span className="upload-spec-hint">JPG, PNG, WebP · maks. 10 MB</span>
       </div>
 
@@ -72,7 +72,7 @@ export function ImageUpload({ value, onChange, error }: ImageUploadProps) {
               <CameraIcon aria-hidden="true" size={26} weight="bold" />
             </div>
             <div className="prompt-text-group">
-              <strong>{isDragging ? "Lepaskan foto tandan di sini" : "Pilih atau Tarik Foto Tandan"}</strong>
+              <strong>{isDragging ? "Lepaskan foto pisang di sini" : "Pilih atau Tarik Foto Pisang"}</strong>
               <small>Foto 1 tandan penuh, pencahayaan alami terang di kebun</small>
             </div>
           </label>
@@ -118,7 +118,7 @@ function ImagePreview({ file, inputId, onRemove }: { file: File; inputId: string
       )}
       <div className="photo-caption">
         <div className="caption-meta">
-          <span className="meta-tag">FOTO TANDAN</span>
+          <span className="meta-tag">FOTO PISANG</span>
           <strong className="meta-filename">{file.name}</strong>
           <small className="meta-size">{formatFileSize(file.size)}</small>
         </div>
