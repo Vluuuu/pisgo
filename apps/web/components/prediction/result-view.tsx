@@ -4,7 +4,8 @@ import { CheckCircleIcon, FlaskIcon, TruckIcon, WarningCircleIcon } from "@phosp
 import { RouteMapLoader } from "@/components/map/route-map-loader";
 import { formatDecisionDate, formatDistance, formatDuration, formatMaturity } from "@/lib/format";
 import { MATURITY_SPECTRUM, MaturityInstrumentDisplay } from "./maturity-instrument";
-import type { LocationSuggestion, RouteData } from "@/types/location";
+import { ROUTING_VEHICLE_MODES } from "@/types/location";
+import type { LocationSuggestion, RouteData, RoutingVehicleMode } from "@/types/location";
 import type { OptimizerResult, PredictionResponse } from "@/types/prediction";
 
 type ResultViewProps = {
@@ -14,6 +15,7 @@ type ResultViewProps = {
   origin: LocationSuggestion;
   destination: LocationSuggestion;
   targetMaturity: number;
+  vehicleMode?: RoutingVehicleMode;
 };
 
 const statusCopy = {
@@ -22,7 +24,7 @@ const statusCopy = {
   over_target: "Diperkirakan tiba lebih matang dari target",
 };
 
-export function ResultView({ prediction, schedule, route, origin, destination, targetMaturity }: ResultViewProps) {
+export function ResultView({ prediction, schedule, route, origin, destination, targetMaturity, vehicleMode }: ResultViewProps) {
   const current = prediction.current_maturity;
   const arrival = schedule.expectedArrivalMaturity;
   const statusOnTarget = schedule.status === "on_target";
@@ -30,6 +32,7 @@ export function ResultView({ prediction, schedule, route, origin, destination, t
   const arrivalInfo = MATURITY_SPECTRUM.find((m) => m.level === Math.round(arrival)) ?? MATURITY_SPECTRUM[4];
   const targetInfo = MATURITY_SPECTRUM.find((m) => m.level === targetMaturity) ?? MATURITY_SPECTRUM[3];
   const currentInfo = MATURITY_SPECTRUM.find((m) => m.level === Math.round(current)) ?? MATURITY_SPECTRUM[2];
+  const vehicleInfo = ROUTING_VEHICLE_MODES.find((v) => v.mode === vehicleMode) ?? ROUTING_VEHICLE_MODES[1];
 
   return (
     <section className="result-workspace" id="recommendation" aria-labelledby="recommendation-title">
@@ -133,7 +136,7 @@ export function ResultView({ prediction, schedule, route, origin, destination, t
             </span>
             <span className="metric-separator">·</span>
             <span className="metric-item">
-              <strong>{formatDuration(route.durationSeconds)}</strong> estimasi perjalanan
+              <strong>{formatDuration(route.durationSeconds)}</strong> estimasi ({vehicleInfo.label})
             </span>
           </div>
         </header>

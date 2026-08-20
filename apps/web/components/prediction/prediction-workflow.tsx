@@ -1,14 +1,23 @@
 "use client";
 
 import { CalendarBlankIcon, CameraIcon, ShieldCheckIcon, SpinnerGapIcon, TruckIcon } from "@phosphor-icons/react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { LocationAutocomplete } from "@/components/locations/location-autocomplete";
+import { ManualLocationPickerLoader } from "@/components/map/manual-location-picker-loader";
 import { ImageUpload } from "./image-upload";
 import { ResultView } from "./result-view";
 import { MATURITY_SPECTRUM, MaturityInstrumentControl, MaturityInstrumentDisplay } from "./maturity-instrument";
 import { daysBetween, todayIso } from "@/lib/dates";
 import { optimizeSchedule } from "@/lib/optimizer/baseline";
-import type { LocationSuggestion, RouteData } from "@/types/location";
+import {
+  DEFAULT_ROUTING_VEHICLE_MODE,
+  ROUTING_VEHICLE_MODES,
+} from "@/types/location";
+import type {
+  LocationSuggestion,
+  RouteData,
+  RoutingVehicleMode,
+} from "@/types/location";
 import type { OptimizerResult, PredictionResponse } from "@/types/prediction";
 
 type WorkflowResult = {
@@ -18,6 +27,7 @@ type WorkflowResult = {
   origin: LocationSuggestion;
   destination: LocationSuggestion;
   targetMaturity: number;
+  vehicleMode: RoutingVehicleMode;
 };
 
 type FormErrors = Partial<Record<"floweringDate" | "photoDate" | "image" | "targetMaturity" | "origin" | "destination", string>>;
@@ -34,14 +44,33 @@ export function PredictionWorkflow() {
   const [targetMaturity, setTargetMaturity] = useState(4);
   const [origin, setOrigin] = useState<LocationSuggestion | null>(null);
   const [destination, setDestination] = useState<LocationSuggestion | null>(null);
+  const [vehicleMode, setVehicleMode] = useState<RoutingVehicleMode>(DEFAULT_ROUTING_VEHICLE_MODE);
+  const [pickerTarget, setPickerTarget] = useState<"origin" | "destination" | null>(null);
+  const [pickerQuery, setPickerQuery] = useState("");
   const [errors, setErrors] = useState<FormErrors>({});
   const [error, setError] = useState<string | null>(null);
   const [phase, setPhase] = useState<"idle" | "routing" | "predicting">("idle");
   const [result, setResult] = useState<WorkflowResult | null>(null);
 
+  const requestGenerationRef = useRef(0);
+  const lastPredictionRef = useRef<{
+    prediction: PredictionResponse;
+    origin: LocationSuggestion;
+    destination: LocationSuggestion;
+    photoDate: string;
+    targetMaturity: number;
+  } | null>(null);
+
   const daf = floweringDate && photoDate ? daysBetweenSafe(floweringDate, photoDate) : null;
   const busy = phase !== "idle";
   const selectedMaturityInfo = MATURITY_SPECTRUM.find((m) => m.level === targetMaturity) ?? MATURITY_SPECTRUM[3];
+
+  function invalidateInFlight() {
+    requestGenerationRef.current++;
+    setPhase("idle");
+    setResult(null);
+    lastPredictionRef.current = null;
+  }
 
   function validate(): FormErrors {
     const next: FormErrors = {};
@@ -65,55 +94,171 @@ export function PredictionWorkflow() {
     setErrors(nextErrors);
     setError(null);
     setResult(null);
+    lastPredictionRef.current = null;
     if (Object.keys(nextErrors).length || !image || !origin || !destination) return;
+
+    const requestGeneration = ++requestGenerationRef.current;
 
     try {
       setPhase("routing");
+      const currentOrigin = origin;
+      const currentDestination = destination;
+      const currentVehicleMode = vehicleMode;
+      const currentTargetMaturity = targetMaturity;
+      const currentPhotoDate = photoDate;
+
       const routeResponse = await fetch("/api/geoapify/route", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ origin: { lat: origin.lat, lon: origin.lon }, destination: { lat: destination.lat, lon: destination.lon } }),
+        body: JSON.stringify({
+          origin: { lat: currentOrigin.lat, lon: currentOrigin.lon },
+          destination: { lat: currentDestination.lat, lon: currentDestination.lon },
+          vehicleMode: currentVehicleMode,
+        }),
       });
       const routeData = (await routeResponse.json()) as RouteData & { error?: string };
       if (!routeResponse.ok) throw new Error(routeData.error ?? "Rute tidak dapat dihitung.");
+      if (requestGeneration !== requestGenerationRef.current) return;
 
       setPhase("predicting");
       const form = new FormData();
       form.set("flowering_date", floweringDate);
-      form.set("photo_date", photoDate);
-      form.set("target_maturity", String(targetMaturity));
+      form.set("photo_date", currentPhotoDate);
+      form.set("target_maturity", String(currentTargetMaturity));
       form.set("image", image);
       const predictionResponse = await fetch("/api/predict", { method: "POST", body: form });
       const prediction = (await predictionResponse.json()) as PredictionResponse & { error?: string };
       if (!predictionResponse.ok) throw new Error(prediction.error ?? "Prediksi tidak dapat dibuat.");
       if (!prediction.banana_detected) throw new Error("Pisang tidak terdeteksi di foto. Gunakan foto lain.");
+      if (requestGeneration !== requestGenerationRef.current) return;
 
       const schedule = optimizeSchedule({
-        photoDate,
-        targetMaturity,
+        photoDate: currentPhotoDate,
+        targetMaturity: currentTargetMaturity,
         currentMaturity: prediction.current_maturity,
         daysToTarget: prediction.days_to_target,
         travelDurationSeconds: routeData.durationSeconds,
       });
-      setResult({ prediction, route: routeData, schedule, origin, destination, targetMaturity });
+
+      lastPredictionRef.current = {
+        prediction,
+        origin: currentOrigin,
+        destination: currentDestination,
+        photoDate: currentPhotoDate,
+        targetMaturity: currentTargetMaturity,
+      };
+
+      setResult({
+        prediction,
+        route: routeData,
+        schedule,
+        origin: currentOrigin,
+        destination: currentDestination,
+        targetMaturity: currentTargetMaturity,
+        vehicleMode: currentVehicleMode,
+      });
       requestAnimationFrame(() => document.getElementById("recommendation")?.scrollIntoView({ behavior: "smooth", block: "start" }));
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Analisis gagal. Coba lagi.");
+      if (requestGeneration === requestGenerationRef.current) {
+        setError(caught instanceof Error ? caught.message : "Analisis gagal. Coba lagi.");
+      }
     } finally {
-      setPhase("idle");
+      if (requestGeneration === requestGenerationRef.current) {
+        setPhase("idle");
+      }
     }
   }
 
   function changeOrigin(location: LocationSuggestion | null) {
+    invalidateInFlight();
     setOrigin(location);
-    setResult(null);
     setErrors((current) => ({ ...current, origin: undefined }));
   }
 
   function changeDestination(location: LocationSuggestion | null) {
+    invalidateInFlight();
     setDestination(location);
-    setResult(null);
     setErrors((current) => ({ ...current, destination: undefined }));
+  }
+
+  async function changeVehicleMode(mode: RoutingVehicleMode) {
+    const requestGeneration = ++requestGenerationRef.current;
+    setVehicleMode(mode);
+
+    const prev = lastPredictionRef.current;
+    // Rule A: Before first analysis or if locations missing: changing vehicle only changes vehicle state.
+    if (!prev || !origin || !destination) {
+      setResult(null);
+      setPhase("idle");
+      return;
+    }
+
+    // Rule B: After a successful analysis exists: trigger fresh recalculation with new vehicle mode
+    const currentOrigin = origin;
+    const currentDestination = destination;
+
+    setResult(null);
+    setError(null);
+    setPhase("routing");
+
+    try {
+      const routeResponse = await fetch("/api/geoapify/route", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          origin: { lat: currentOrigin.lat, lon: currentOrigin.lon },
+          destination: { lat: currentDestination.lat, lon: currentDestination.lon },
+          vehicleMode: mode,
+        }),
+      });
+      const routeData = (await routeResponse.json()) as RouteData & { error?: string };
+      if (!routeResponse.ok) throw new Error(routeData.error ?? "Rute tidak dapat dihitung.");
+      if (requestGeneration !== requestGenerationRef.current) return;
+
+      const schedule = optimizeSchedule({
+        photoDate: prev.photoDate,
+        targetMaturity: prev.targetMaturity,
+        currentMaturity: prev.prediction.current_maturity,
+        daysToTarget: prev.prediction.days_to_target,
+        travelDurationSeconds: routeData.durationSeconds,
+      });
+
+      setResult({
+        prediction: prev.prediction,
+        route: routeData,
+        schedule,
+        origin: currentOrigin,
+        destination: currentDestination,
+        targetMaturity: prev.targetMaturity,
+        vehicleMode: mode,
+      });
+    } catch (caught) {
+      if (requestGeneration === requestGenerationRef.current) {
+        setError(caught instanceof Error ? caught.message : "Analisis rute gagal. Coba lagi.");
+      }
+    } finally {
+      if (requestGeneration === requestGenerationRef.current) {
+        setPhase("idle");
+      }
+    }
+  }
+
+  function openOriginPicker(query: string) {
+    setPickerTarget("origin");
+    setPickerQuery(query);
+  }
+
+  function openDestinationPicker(query: string) {
+    setPickerTarget("destination");
+    setPickerQuery(query);
+  }
+
+  function handleManualLocationConfirm(location: LocationSuggestion) {
+    if (pickerTarget === "origin") {
+      changeOrigin(location);
+    } else if (pickerTarget === "destination") {
+      changeDestination(location);
+    }
   }
 
   return (
@@ -182,7 +327,13 @@ export function PredictionWorkflow() {
           <legend><span className="section-number" aria-hidden="true">04</span>Perjalanan</legend>
           <div className="route-stack">
             <div className="route-field">
-              <LocationAutocomplete label="Asal" value={origin} onChange={changeOrigin} placeholder="Kebun, rumah kemas, atau kota asal" />
+              <LocationAutocomplete
+                label="Asal"
+                value={origin}
+                onChange={changeOrigin}
+                placeholder="Kebun, rumah kemas, atau kota asal"
+                onOpenMapPicker={openOriginPicker}
+              />
               {errors.origin && <p role="alert" className="field-error">{errors.origin}</p>}
             </div>
             <div className="route-connector-line" aria-hidden="true">
@@ -191,13 +342,35 @@ export function PredictionWorkflow() {
               <span className="connector-dot dest" />
             </div>
             <div className="route-field">
-              <LocationAutocomplete label="Tujuan" value={destination} onChange={changeDestination} placeholder="Pasar induk, pelabuhan, atau kota tujuan" />
+              <LocationAutocomplete
+                label="Tujuan"
+                value={destination}
+                onChange={changeDestination}
+                placeholder="Pasar induk, pelabuhan, atau kota tujuan"
+                onOpenMapPicker={openDestinationPicker}
+              />
               {errors.destination && <p role="alert" className="field-error">{errors.destination}</p>}
             </div>
           </div>
-          <div className="transport-mode-badge">
-            <TruckIcon size={16} weight="bold" aria-hidden="true" />
-            <span>Truk ringan · Estimasi kondisi lalu lintas umum</span>
+
+          <div className="vehicle-selector-group">
+            <label htmlFor="vehicle-mode-select" className="vehicle-select-label">Kendaraan</label>
+            <div className="vehicle-select-wrap">
+              <TruckIcon size={18} weight="bold" aria-hidden="true" />
+              <select
+                id="vehicle-mode-select"
+                value={vehicleMode}
+                onChange={(e) => changeVehicleMode(e.target.value as RoutingVehicleMode)}
+                className="field vehicle-select"
+                aria-label="Pilih jenis kendaraan pengiriman"
+              >
+                {ROUTING_VEHICLE_MODES.map((opt) => (
+                  <option key={opt.mode} value={opt.mode}>
+                    {opt.label} ({opt.description})
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
         </fieldset>
 
@@ -222,6 +395,16 @@ export function PredictionWorkflow() {
           </button>
         </div>
       </form>
+
+      {/* Reusable Manual Location Picker modal */}
+      <ManualLocationPickerLoader
+        isOpen={pickerTarget !== null}
+        fieldLabel={pickerTarget === "origin" ? "Asal" : "Tujuan"}
+        initialLocation={pickerTarget === "origin" ? origin : destination}
+        initialQuery={pickerQuery}
+        onConfirm={handleManualLocationConfirm}
+        onClose={() => setPickerTarget(null)}
+      />
 
       {!result && (
         <aside className="standby-instrument" aria-label="Perencanaan kematangan & pengiriman">

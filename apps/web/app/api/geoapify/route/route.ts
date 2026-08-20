@@ -1,4 +1,5 @@
-import { getRoute } from "@/lib/geoapify/routing";
+import { getRoute, isValidRoutingVehicleMode, RoutingError } from "@/lib/geoapify/routing";
+import { DEFAULT_ROUTING_VEHICLE_MODE } from "@/types/location";
 import type { Coordinates } from "@/types/location";
 
 function isCoordinates(value: unknown): value is Coordinates {
@@ -10,7 +11,11 @@ function isCoordinates(value: unknown): value is Coordinates {
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as { origin?: unknown; destination?: unknown };
+    const body = (await request.json()) as {
+      origin?: unknown;
+      destination?: unknown;
+      vehicleMode?: unknown;
+    };
     if (!isCoordinates(body.origin) || !isCoordinates(body.destination)) {
       return Response.json({ error: "Choose valid origin and destination locations." }, { status: 400 });
     }
@@ -18,8 +23,16 @@ export async function POST(request: Request) {
       return Response.json({ error: "Origin and destination must be different." }, { status: 400 });
     }
 
-    return Response.json(await getRoute(body.origin, body.destination));
+    if (body.vehicleMode !== undefined && !isValidRoutingVehicleMode(body.vehicleMode)) {
+      return Response.json({ error: "Invalid vehicle mode." }, { status: 400 });
+    }
+
+    const vehicleMode = body.vehicleMode ?? DEFAULT_ROUTING_VEHICLE_MODE;
+    return Response.json(await getRoute(body.origin, body.destination, vehicleMode));
   } catch (error) {
+    if (error instanceof RoutingError) {
+      return Response.json({ error: error.message, code: error.code }, { status: error.status });
+    }
     const message = error instanceof Error ? error.message : "Route calculation failed.";
     return Response.json({ error: message }, { status: 502 });
   }
