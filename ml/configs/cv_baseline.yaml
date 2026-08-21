@@ -1,0 +1,35 @@
+project:
+  name: cavendish-maturity-image-classifier
+  model_version: cavendish-color-texture-v1
+  random_seed: 42
+
+paths:
+  dataset_zip: "D:/Augmented Banana Variety Dataset.zip"
+  manifest_output: reports/cv_manifest.csv
+  model_output: models/cavendish_maturity_classifier.joblib
+  metrics_output: reports/cv_metrics.json
+  prediction_output: reports/cv_prediction.json
+
+data:
+  variety: Cavendish
+  labels:
+    - unripe
+    - half_ripe
+    - ripe
+    - overripe
+  train_ratio: 0.70
+  validation_ratio: 0.15
+  test_ratio: 0.15
+  train_with_augmented: true
+
+features:
+  resize_width: 192
+  resize_height: 128
+  histogram_bins: 16
+  grid_rows: 3
+  grid_columns: 3
+
+model:
+  max_iter: 1200
+  c: 1.0
+  class_weight: balanced

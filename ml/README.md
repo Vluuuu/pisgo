@@ -1,6 +1,6 @@
 # PisGo ML — Cavendish Harvest & Arrival Predictor
 
-Pipeline machine learning tabular untuk memperkirakan tanggal panen, tanggal kedatangan, dan status kesiapan panen pisang Cavendish. Implementasi ini adalah baseline operasional untuk data agronomi, usia tanaman/buah, cuaca, lokasi, dan logistik. Pipeline computer vision/foto belum termasuk dalam versi ini.
+Proyek machine learning untuk pisang Cavendish dengan dua pipeline terpisah: model tabular untuk memperkirakan tanggal panen/arrival dan baseline computer vision untuk mengklasifikasikan kematangan foto menjadi `unripe`, `half_ripe`, `ripe`, atau `overripe`. Keduanya menyimpan preprocessing dan model sebagai artifact persisten sehingga inference tidak melakukan training ulang.
 
 ## Output model
 
@@ -155,9 +155,48 @@ python -m pytest -q
 
 Test mencakup loading/validasi, group split, feature engineering, missing-value preprocessing, training kecil, penyimpanan/pemuatan artifact, dan output prediksi CSV.
 
+## Computer vision: klasifikasi kematangan foto
+
+Baseline CV membaca gambar langsung dari ZIP tanpa mengekstrak dataset. Konfigurasi berada di `configs/cv_baseline.yaml`. Dataset yang digunakan memiliki nama file seperti:
+
+```text
+Cavendish_Half_Ripe_Bottom_0001_Aug_1141.jpg
+```
+
+Metadata filename dipakai untuk membentuk label, view, specimen ID, dan keluarga augmentasi. Split dilakukan berdasarkan `variety + maturity_class + specimen_id`, sehingga semua view dan augmentasi dari spesimen yang sama selalu berada pada partition yang sama. Validation dan test hanya menggunakan gambar original.
+
+Training:
+
+```powershell
+python -m pisgo_ml.cv_train --config configs/cv_baseline.yaml
+```
+
+Output:
+
+- `models/cavendish_maturity_classifier.joblib`
+- `reports/cv_manifest.csv`
+- `reports/cv_metrics.json`
+
+Model ini menggunakan fitur RGB/HSV, statistik warna spasial, edge, dan tekstur ringan, lalu `StandardScaler` + multinomial logistic regression. Ini adalah classifier tingkat gambar, bukan object detector; YOLO belum digunakan karena dataset tidak memiliki bounding box.
+
+Inference file foto biasa:
+
+```powershell
+python -m pisgo_ml.cv_predict --config configs/cv_baseline.yaml --image path/to/photo.jpg
+```
+
+Inference langsung terhadap satu file di dalam ZIP:
+
+```powershell
+python -m pisgo_ml.cv_predict --config configs/cv_baseline.yaml `
+  --member "Augmented Banana Variety Dataset/Cavendish/Cavendish_Ripe_Top_0002.jpg"
+```
+
+Raw JSON mencakup `predicted_class`, `confidence`, probabilitas empat kelas, preprocessing, versi model, dan waktu inference. Script hanya memuat artifact terlatih dan tidak melakukan training ulang.
+
 ## Batasan
 
-- Performa sample berasal dari data sintetis dan tidak boleh digunakan sebagai klaim performa produksi.
-- Dataset asli longitudinal per tanaman/tandan wajib disiapkan untuk training yang valid.
-- Foto saat ini hanya dapat direferensikan melalui `image_id`; piksel foto belum diproses. Integrasi computer vision membutuhkan model dan pipeline terpisah.
-- Artifact Joblib sebaiknya hanya dimuat dari sumber tepercaya karena format pickle dapat mengeksekusi kode saat deserialisasi.
+- Performa model tabular berasal dari data sintetis dan tidak boleh digunakan sebagai klaim produksi; dataset longitudinal asli tetap diperlukan.
+- Baseline CV dilatih pada foto terkontrol dari satu dataset. Metrik tinggi pada grouped test tidak membuktikan generalisasi ke kamera, kebun, pencahayaan, background, atau pisang di luar distribusi tersebut.
+- Kelas CV bersifat image-level; model belum mendeteksi lokasi pisang dan belum menggabungkan output visual dengan DAF/tabular secara otomatis.
+- Artifact Joblib hanya boleh dimuat dari sumber tepercaya karena format pickle dapat mengeksekusi kode saat deserialisasi.
