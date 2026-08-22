@@ -9,7 +9,7 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "node --test lib/optimizer/baseline.test.ts lib/geoapify/routing.test.ts lib/geoapify/tiles.test.ts lib/geoapify/autocomplete.test.ts lib/tomtom/client.test.ts lib/locations/search.test.ts",
+    "test": "node --test lib/optimizer/baseline.test.ts lib/prediction/ai-api.test.ts lib/geoapify/routing.test.ts lib/geoapify/tiles.test.ts lib/geoapify/autocomplete.test.ts lib/tomtom/client.test.ts lib/locations/search.test.ts",
     "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
     "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
     "upload": "opennextjs-cloudflare build && opennextjs-cloudflare upload",

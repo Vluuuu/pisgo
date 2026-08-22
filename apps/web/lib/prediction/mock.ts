@@ -26,6 +26,16 @@ export async function predictWithMock(input: MockPredictionInput): Promise<Predi
     current_maturity: currentMaturity,
     confidence: 0.91,
     days_to_target: daysToTarget,
+    debug: {
+      predicted_class: "half_ripe",
+      class_probabilities: { unripe: 0.05, half_ripe: 0.85, ripe: 0.08, overripe: 0.02 },
+      maturity_class_scale: { unripe: 2.0, half_ripe: 3.5, ripe: 5.5, overripe: 6.5 },
+      foreground_proxy_ratio: 0.25,
+      banana_detection_threshold: 0.02,
+      detection_method: "foreground-color-heuristic-proxy",
+      inference_milliseconds: 5.0,
+    },
+    adapter_version: "mock-v1",
     model_version: "mock-v1",
   };
 }

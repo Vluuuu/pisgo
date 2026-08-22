@@ -1,4 +1,4 @@
-import { predictBanana } from "@/lib/prediction";
+import { AiApiError, predictBanana } from "@/lib/prediction";
 
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 
@@ -11,21 +11,30 @@ export async function POST(request: Request) {
     const image = form.get("image");
 
     if (typeof floweringDate !== "string" || typeof photoDate !== "string") {
-      return Response.json({ error: "Flowering date and photo date are required." }, { status: 400 });
+      return Response.json({ error: "Tanggal berbunga dan tanggal foto wajib diisi." }, { status: 400 });
     }
     if (!Number.isFinite(targetMaturity) || targetMaturity < 1 || targetMaturity > 7) {
-      return Response.json({ error: "Target maturity must be between 1 and 7." }, { status: 400 });
+      return Response.json({ error: "Target kematangan harus berada di antara 1 dan 7." }, { status: 400 });
     }
-    if (!(image instanceof File) || image.size === 0 || !image.type.startsWith("image/")) {
-      return Response.json({ error: "Upload a valid banana image." }, { status: 400 });
+    if (!(image instanceof File && image.size > 0 && (image.type.startsWith("image/") || image.name.match(/\.(jpe?g|png|webp)$/i)))) {
+      return Response.json({ error: "Unggah berkas foto pisang yang valid (JPG, PNG, WebP)." }, { status: 400 });
     }
     if (image.size > MAX_IMAGE_BYTES) {
-      return Response.json({ error: "Image must be 10 MB or smaller." }, { status: 413 });
+      return Response.json({ error: "Ukuran foto tidak boleh lebih dari 10 MB." }, { status: 413 });
     }
 
-    return Response.json(await predictBanana({ floweringDate, photoDate, targetMaturity }));
+    const prediction = await predictBanana({
+      floweringDate,
+      photoDate,
+      targetMaturity,
+      image,
+    });
+
+    return Response.json(prediction);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Prediction failed.";
-    return Response.json({ error: message }, { status: 400 });
+    if (error instanceof AiApiError) {
+      return Response.json({ error: error.message, code: error.code }, { status: error.status });
+    }
+    return Response.json({ error: "Gagal memproses prediksi." }, { status: 500 });
   }
 }

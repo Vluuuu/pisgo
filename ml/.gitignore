@@ -1,0 +1,5 @@
+models/*.joblib
+reports/*.json
+reports/*.csv
+!models/.gitkeep
+!reports/.gitkeep

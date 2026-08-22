@@ -1,0 +1,9 @@
+record_id,image_id,plant_id,bunch_id,planting_date,flowering_date,photo_date,maturity_stage,maturity_score,temperature_c,humidity_pct,rainfall_mm_7d,soil_moisture_pct,farm_location,elevation_m,latitude,longitude,soil_type,irrigation_type,weather_condition,bunch_weight_kg,distance_km,travel_duration_hours,transport_mode,storage_condition,storage_temperature_c
+rec_0001,img_0001.jpg,plant_001,bunch_001,2025-01-05,2025-08-01,2025-10-24,developing,3.68,25.1,84.0,,,Lampung,120.0,-5.45,105.27,loam,drip,sunny,23.6,683.0,15.2,truck_ambient,ambient,25.0
+rec_0002,img_0002.jpg,plant_001,bunch_001,2025-01-05,2025-08-18,2025-11-02,developing,3.31,28.8,78.5,60.2,66.7,Lampung,120.0,-5.45,105.27,loam,drip,cloudy,26.8,155.0,9.7,reefer_truck,cooled,14.0
+rec_0003,img_0003.jpg,plant_002,bunch_002,2025-01-08,2025-08-07,2025-10-30,developing,3.74,25.8,87.8,28.1,57.7,Jember,90.0,-8.17,113.7,clay_loam,rainfed,rainy,28.7,378.0,11.6,truck_ambient,ambient,25.0
+rec_0004,img_0004.jpg,plant_002,bunch_002,2025-01-08,2025-09-06,2025-12-06,mature_green,4.37,26.4,73.9,11.7,68.2,Jember,90.0,-8.17,113.7,clay_loam,rainfed,sunny,29.6,459.0,12.4,reefer_truck,cooled,14.0
+rec_0005,img_0005.jpg,plant_003,bunch_003,2025-01-11,2025-09-10,2025-11-20,developing,2.85,28.3,72.7,37.8,63.2,Banyuwangi,70.0,-8.22,114.37,sandy_loam,drip,cloudy,27.3,276.0,9.2,truck_ambient,ambient,25.0
+rec_0006,img_0006.jpg,plant_003,bunch_003,2025-01-11,2025-09-04,2025-12-06,mature_green,4.7,28.5,66.3,24.0,57.3,Banyuwangi,70.0,-8.22,114.37,sandy_loam,drip,rainy,30.9,110.0,7.9,reefer_truck,cooled,14.0
+rec_0007,img_0007.jpg,plant_004,bunch_004,2025-01-14,2025-09-10,2025-11-25,developing,3.13,26.5,79.3,46.7,69.1,Sukabumi,520.0,-6.92,106.93,loam,rainfed,sunny,26.2,574.0,14.8,truck_ambient,ambient,25.0
+rec_0008,img_0008.jpg,plant_004,bunch_004,2025-01-14,2025-09-15,2025-12-20,mature_green,4.67,24.9,70.6,44.4,63.4,Sukabumi,520.0,-6.92,106.93,loam,rainfed,cloudy,25.8,183.0,8.7,reefer_truck,cooled,14.0

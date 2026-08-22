@@ -9,7 +9,10 @@
     "days_after_flowering",
     "current_maturity",
     "confidence",
-    "model_version"
+    "days_to_target",
+    "model_version",
+    "adapter_version",
+    "debug"
   ],
   "properties": {
     "banana_detected": {
@@ -24,12 +27,16 @@
       "minimum": 0
     },
     "current_maturity": {
-      "type": "number"
+      "type": ["number", "null"],
+      "minimum": 1,
+      "maximum": 7,
+      "description": "Probability-weighted PisGo design mapping from visual class probabilities to the UI scale. Null when banana_detected is false."
     },
     "confidence": {
-      "type": "number",
+      "type": ["number", "null"],
       "minimum": 0,
-      "maximum": 1
+      "maximum": 1,
+      "description": "Uncalibrated maximum class-probability score. Null when banana_detected is false."
     },
     "days_to_target": {
       "type": ["number", "null"],
@@ -37,7 +44,89 @@
     },
     "model_version": {
       "type": "string"
+    },
+    "adapter_version": {
+      "type": "string"
+    },
+    "debug": {
+      "$ref": "#/$defs/predictionDebug"
     }
   },
+  "$defs": {
+    "predictionDebug": {
+      "type": "object",
+      "required": [
+        "predicted_class",
+        "class_probabilities",
+        "maturity_class_scale",
+        "foreground_proxy_ratio",
+        "banana_detection_threshold",
+        "detection_method",
+        "inference_milliseconds"
+      ],
+      "properties": {
+        "predicted_class": {
+          "type": "string",
+          "enum": ["unripe", "half_ripe", "ripe", "overripe"]
+        },
+        "class_probabilities": {
+          "type": "object",
+          "required": ["unripe", "half_ripe", "ripe", "overripe"],
+          "properties": {
+            "unripe": {"type": "number", "minimum": 0, "maximum": 1},
+            "half_ripe": {"type": "number", "minimum": 0, "maximum": 1},
+            "ripe": {"type": "number", "minimum": 0, "maximum": 1},
+            "overripe": {"type": "number", "minimum": 0, "maximum": 1}
+          },
+          "additionalProperties": false
+        },
+        "maturity_class_scale": {
+          "type": "object",
+          "required": ["unripe", "half_ripe", "ripe", "overripe"],
+          "properties": {
+            "unripe": {"type": "number"},
+            "half_ripe": {"type": "number"},
+            "ripe": {"type": "number"},
+            "overripe": {"type": "number"}
+          },
+          "additionalProperties": false
+        },
+        "foreground_proxy_ratio": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "banana_detection_threshold": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "detection_method": {
+          "type": "string",
+          "const": "foreground-color-heuristic-proxy"
+        },
+        "inference_milliseconds": {
+          "type": ["number", "null"],
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"banana_detected": {"const": false}},
+        "required": ["banana_detected"]
+      },
+      "then": {
+        "properties": {
+          "current_maturity": {"type": "null"},
+          "confidence": {"type": "null"},
+          "days_to_target": {"type": "null"}
+        }
+      }
+    }
+  ],
   "additionalProperties": false
 }
