@@ -1,2 +1,2 @@
-// ponytail: swap this export for the versioned AI API client when model inference is available.
-export { predictWithMock as predictBanana } from "./mock";
+export { predictWithAiApi as predictBanana, AiApiError } from "./ai-api";
+export { predictWithMock } from "./mock";

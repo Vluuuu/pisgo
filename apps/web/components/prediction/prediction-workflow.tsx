@@ -19,10 +19,14 @@ import type {
   RouteData,
   RoutingVehicleMode,
 } from "@/types/location";
-import type { OptimizerResult, PredictionResponse } from "@/types/prediction";
+import type {
+  DetectedPredictionResponse,
+  OptimizerResult,
+  PredictionResponse,
+} from "@/types/prediction";
 
 type WorkflowResult = {
-  prediction: PredictionResponse;
+  prediction: DetectedPredictionResponse;
   route: RouteData;
   schedule: OptimizerResult;
   origin: LocationSuggestion;
@@ -55,7 +59,7 @@ export function PredictionWorkflow() {
 
   const requestGenerationRef = useRef(0);
   const lastPredictionRef = useRef<{
-    prediction: PredictionResponse;
+    prediction: DetectedPredictionResponse;
     origin: LocationSuggestion;
     destination: LocationSuggestion;
     photoDate: string;

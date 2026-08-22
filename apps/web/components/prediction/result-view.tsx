@@ -7,10 +7,10 @@ import { formatDecisionDate, formatDistance, formatDuration, formatMaturity } fr
 import { MATURITY_SPECTRUM, MaturityInstrumentDisplay } from "./maturity-instrument";
 import { ROUTING_VEHICLE_MODES } from "@/types/location";
 import type { LocationSuggestion, RouteData, RoutingVehicleMode } from "@/types/location";
-import type { OptimizerResult, PredictionResponse } from "@/types/prediction";
+import type { DetectedPredictionResponse, OptimizerResult } from "@/types/prediction";
 
 type ResultViewProps = {
-  prediction: PredictionResponse;
+  prediction: DetectedPredictionResponse;
   schedule: OptimizerResult;
   route: RouteData;
   origin: LocationSuggestion;
@@ -153,13 +153,13 @@ export function ResultView({ prediction, schedule, route, origin, destination, t
           <Evidence label="Hari setelah berbunga" value={`${prediction.days_after_flowering} hari`} />
           <Evidence label="Kematangan saat ini" value={`Tingkat ${formatMaturity(current)} / 7`} />
           <Evidence label="Target kematangan" value={`Tingkat ${formatMaturity(targetMaturity)} / 7`} />
-          <Evidence label="Tingkat keyakinan model" value={`${Math.round(prediction.confidence * 100)}%`} />
+          <Evidence label="Skor model (belum dikalibrasi)" value={`${Math.round(prediction.confidence * 100)}%`} />
         </dl>
       </section>
 
       <footer className="recommendation-meta">
         <p>
-          <FlaskIcon aria-hidden="true" size={16} weight="regular" /> Model baseline {prediction.model_version} · Prototipe pengembangan
+          <FlaskIcon aria-hidden="true" size={16} weight="regular" /> Model {prediction.model_version} ({prediction.adapter_version}) · Prototipe pengembangan
         </p>
       </footer>
     </section>
