@@ -35,7 +35,6 @@ export async function POST(request: Request) {
     if (error instanceof AiApiError) {
       return Response.json({ error: error.message, code: error.code }, { status: error.status });
     }
-    const message = error instanceof Error ? error.message : "Gagal memproses prediksi.";
-    return Response.json({ error: message }, { status: 500 });
+    return Response.json({ error: "Gagal memproses prediksi." }, { status: 500 });
   }
 }

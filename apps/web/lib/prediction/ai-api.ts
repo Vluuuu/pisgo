@@ -1,4 +1,10 @@
-import type { PredictionRequest, PredictionResponse } from "@/types/prediction";
+import type {
+  MaturityClass,
+  MaturityClassValues,
+  PredictionDebugInfo,
+  PredictionRequest,
+  PredictionResponse,
+} from "@/types/prediction";
 
 export class AiApiError extends Error {
   readonly status: number;
@@ -13,6 +19,102 @@ export class AiApiError extends Error {
 }
 
 const DEFAULT_TIMEOUT_MS = 15000;
+const VALID_MATURITY_CLASSES: readonly MaturityClass[] = [
+  "unripe",
+  "half_ripe",
+  "ripe",
+  "overripe",
+];
+
+function isFiniteNumberBetween(val: unknown, min: number, max: number): val is number {
+  return typeof val === "number" && Number.isFinite(val) && val >= min && val <= max;
+}
+
+function isValidMaturityClassValues(obj: unknown, minVal: number, maxVal?: number): obj is MaturityClassValues {
+  if (!obj || typeof obj !== "object") return false;
+  const record = obj as Record<string, unknown>;
+  for (const cls of VALID_MATURITY_CLASSES) {
+    const v = record[cls];
+    if (typeof v !== "number" || !Number.isFinite(v) || v < minVal || (maxVal !== undefined && v > maxVal)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function isValidPredictionDebug(obj: unknown): obj is PredictionDebugInfo {
+  if (!obj || typeof obj !== "object") return false;
+  const d = obj as Record<string, unknown>;
+
+  if (typeof d.predicted_class !== "string" || !VALID_MATURITY_CLASSES.includes(d.predicted_class as MaturityClass)) {
+    return false;
+  }
+  if (!isValidMaturityClassValues(d.class_probabilities, 0, 1)) {
+    return false;
+  }
+  if (!isValidMaturityClassValues(d.maturity_class_scale, 0)) {
+    return false;
+  }
+  if (!isFiniteNumberBetween(d.foreground_proxy_ratio, 0, 1)) {
+    return false;
+  }
+  if (!isFiniteNumberBetween(d.banana_detection_threshold, 0, 1)) {
+    return false;
+  }
+  if (d.detection_method !== "foreground-color-heuristic-proxy") {
+    return false;
+  }
+  if (d.inference_milliseconds !== null && !(typeof d.inference_milliseconds === "number" && Number.isFinite(d.inference_milliseconds) && d.inference_milliseconds >= 0)) {
+    return false;
+  }
+
+  return true;
+}
+
+function validatePredictionResponse(data: unknown): PredictionResponse {
+  if (!data || typeof data !== "object") {
+    throw new AiApiError("Format data inferensi AI tidak sesuai.", 502, "SCHEMA_MISMATCH");
+  }
+
+  const p = data as Record<string, unknown>;
+
+  if (typeof p.banana_detected !== "boolean") {
+    throw new AiApiError("Format data inferensi AI tidak sesuai.", 502, "SCHEMA_MISMATCH");
+  }
+  if (p.cultivar !== "cavendish") {
+    throw new AiApiError("Format data inferensi AI tidak sesuai.", 502, "SCHEMA_MISMATCH");
+  }
+  if (typeof p.days_after_flowering !== "number" || !Number.isInteger(p.days_after_flowering) || p.days_after_flowering < 0) {
+    throw new AiApiError("Format data inferensi AI tidak sesuai.", 502, "SCHEMA_MISMATCH");
+  }
+  if (typeof p.model_version !== "string" || p.model_version.trim() === "") {
+    throw new AiApiError("Format data inferensi AI tidak sesuai.", 502, "SCHEMA_MISMATCH");
+  }
+  if (typeof p.adapter_version !== "string" || p.adapter_version.trim() === "") {
+    throw new AiApiError("Format data inferensi AI tidak sesuai.", 502, "SCHEMA_MISMATCH");
+  }
+  if (!isValidPredictionDebug(p.debug)) {
+    throw new AiApiError("Format data inferensi AI tidak sesuai.", 502, "SCHEMA_MISMATCH");
+  }
+
+  if (p.banana_detected === true) {
+    if (!isFiniteNumberBetween(p.current_maturity, 1, 7)) {
+      throw new AiApiError("Format data inferensi AI tidak sesuai.", 502, "SCHEMA_MISMATCH");
+    }
+    if (!isFiniteNumberBetween(p.confidence, 0, 1)) {
+      throw new AiApiError("Format data inferensi AI tidak sesuai.", 502, "SCHEMA_MISMATCH");
+    }
+    if (p.days_to_target !== null && !(typeof p.days_to_target === "number" && Number.isFinite(p.days_to_target) && p.days_to_target >= 0)) {
+      throw new AiApiError("Format data inferensi AI tidak sesuai.", 502, "SCHEMA_MISMATCH");
+    }
+  } else {
+    if (p.current_maturity !== null || p.confidence !== null || p.days_to_target !== null) {
+      throw new AiApiError("Format data inferensi AI tidak sesuai.", 502, "SCHEMA_MISMATCH");
+    }
+  }
+
+  return data as PredictionResponse;
+}
 
 /**
  * Normalizes base URL by stripping trailing slashes.
@@ -126,14 +228,5 @@ export async function predictWithAiApi(
     throw new AiApiError(`Gagal memproses inferensi AI (${response.status}).`, response.status >= 500 ? 502 : response.status, "UPSTREAM_ERROR");
   }
 
-  if (!json || typeof json !== "object") {
-    throw new AiApiError("Format data inferensi AI tidak sesuai.", 502, "SCHEMA_MISMATCH");
-  }
-
-  const payload = json as Partial<PredictionResponse>;
-  if (typeof payload.banana_detected !== "boolean") {
-    throw new AiApiError("Data inferensi kehilangan status deteksi pisang.", 502, "SCHEMA_MISMATCH");
-  }
-
-  return json as PredictionResponse;
+  return validatePredictionResponse(json);
 }

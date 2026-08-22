@@ -279,4 +279,217 @@ describe("predictWithAiApi", () => {
       }
     );
   });
+
+  it("rejects 200 response missing current_maturity when banana_detected=true", async () => {
+    const mockFetch = (async () => {
+      const malformedResponse = {
+        banana_detected: true,
+        cultivar: "cavendish",
+        days_after_flowering: 80,
+        current_maturity: null,
+        confidence: 0.9,
+        days_to_target: 10,
+        model_version: "cavendish-v1",
+        adapter_version: "pisgo-ai-api-v1",
+        debug: {
+          predicted_class: "half_ripe",
+          class_probabilities: { unripe: 0.1, half_ripe: 0.8, ripe: 0.08, overripe: 0.02 },
+          maturity_class_scale: { unripe: 2.0, half_ripe: 3.5, ripe: 5.5, overripe: 6.5 },
+          foreground_proxy_ratio: 0.3,
+          banana_detection_threshold: 0.02,
+          detection_method: "foreground-color-heuristic-proxy",
+          inference_milliseconds: 25.0,
+        },
+      };
+
+      return new Response(JSON.stringify(malformedResponse), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as unknown as typeof fetch;
+
+    await assert.rejects(
+      async () => {
+        await predictWithAiApi(sampleRequest, {
+          baseUrl: "http://127.0.0.1:8001",
+          fetchImpl: mockFetch,
+        });
+      },
+      (err: unknown) => {
+        assert(err instanceof AiApiError);
+        assert.equal(err.status, 502);
+        assert.equal(err.code, "SCHEMA_MISMATCH");
+        assert.equal(err.message, "Format data inferensi AI tidak sesuai.");
+        return true;
+      }
+    );
+  });
+
+  it("rejects 200 response with confidence outside 0..1", async () => {
+    const mockFetch = (async () => {
+      const malformedResponse = {
+        banana_detected: true,
+        cultivar: "cavendish",
+        days_after_flowering: 80,
+        current_maturity: 3.5,
+        confidence: 1.5,
+        days_to_target: 10,
+        model_version: "cavendish-v1",
+        adapter_version: "pisgo-ai-api-v1",
+        debug: {
+          predicted_class: "half_ripe",
+          class_probabilities: { unripe: 0.1, half_ripe: 0.8, ripe: 0.08, overripe: 0.02 },
+          maturity_class_scale: { unripe: 2.0, half_ripe: 3.5, ripe: 5.5, overripe: 6.5 },
+          foreground_proxy_ratio: 0.3,
+          banana_detection_threshold: 0.02,
+          detection_method: "foreground-color-heuristic-proxy",
+          inference_milliseconds: 25.0,
+        },
+      };
+
+      return new Response(JSON.stringify(malformedResponse), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as unknown as typeof fetch;
+
+    await assert.rejects(
+      async () => {
+        await predictWithAiApi(sampleRequest, {
+          baseUrl: "http://127.0.0.1:8001",
+          fetchImpl: mockFetch,
+        });
+      },
+      (err: unknown) => {
+        assert(err instanceof AiApiError);
+        assert.equal(err.status, 502);
+        assert.equal(err.code, "SCHEMA_MISMATCH");
+        return true;
+      }
+    );
+  });
+
+  it("rejects 200 response with banana_detected=false but current_maturity is number", async () => {
+    const mockFetch = (async () => {
+      const malformedResponse = {
+        banana_detected: false,
+        cultivar: "cavendish",
+        days_after_flowering: 80,
+        current_maturity: 3.0,
+        confidence: null,
+        days_to_target: null,
+        model_version: "cavendish-v1",
+        adapter_version: "pisgo-ai-api-v1",
+        debug: {
+          predicted_class: "unripe",
+          class_probabilities: { unripe: 0.9, half_ripe: 0.1, ripe: 0.0, overripe: 0.0 },
+          maturity_class_scale: { unripe: 2.0, half_ripe: 3.5, ripe: 5.5, overripe: 6.5 },
+          foreground_proxy_ratio: 0.005,
+          banana_detection_threshold: 0.02,
+          detection_method: "foreground-color-heuristic-proxy",
+          inference_milliseconds: 10.0,
+        },
+      };
+
+      return new Response(JSON.stringify(malformedResponse), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as unknown as typeof fetch;
+
+    await assert.rejects(
+      async () => {
+        await predictWithAiApi(sampleRequest, {
+          baseUrl: "http://127.0.0.1:8001",
+          fetchImpl: mockFetch,
+        });
+      },
+      (err: unknown) => {
+        assert(err instanceof AiApiError);
+        assert.equal(err.status, 502);
+        assert.equal(err.code, "SCHEMA_MISMATCH");
+        return true;
+      }
+    );
+  });
+
+  it("rejects 200 response with invalid predicted_class", async () => {
+    const mockFetch = (async () => {
+      const malformedResponse = {
+        banana_detected: true,
+        cultivar: "cavendish",
+        days_after_flowering: 80,
+        current_maturity: 3.5,
+        confidence: 0.85,
+        days_to_target: 10,
+        model_version: "cavendish-v1",
+        adapter_version: "pisgo-ai-api-v1",
+        debug: {
+          predicted_class: "very_ripe",
+          class_probabilities: { unripe: 0.1, half_ripe: 0.8, ripe: 0.08, overripe: 0.02 },
+          maturity_class_scale: { unripe: 2.0, half_ripe: 3.5, ripe: 5.5, overripe: 6.5 },
+          foreground_proxy_ratio: 0.3,
+          banana_detection_threshold: 0.02,
+          detection_method: "foreground-color-heuristic-proxy",
+          inference_milliseconds: 25.0,
+        },
+      };
+
+      return new Response(JSON.stringify(malformedResponse), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as unknown as typeof fetch;
+
+    await assert.rejects(
+      async () => {
+        await predictWithAiApi(sampleRequest, {
+          baseUrl: "http://127.0.0.1:8001",
+          fetchImpl: mockFetch,
+        });
+      },
+      (err: unknown) => {
+        assert(err instanceof AiApiError);
+        assert.equal(err.status, 502);
+        assert.equal(err.code, "SCHEMA_MISMATCH");
+        return true;
+      }
+    );
+  });
+
+  it("rejects 200 response with missing or invalid debug structure", async () => {
+    const mockFetch = (async () => {
+      const malformedResponse = {
+        banana_detected: true,
+        cultivar: "cavendish",
+        days_after_flowering: 80,
+        current_maturity: 3.5,
+        confidence: 0.85,
+        days_to_target: 10,
+        model_version: "cavendish-v1",
+        adapter_version: "pisgo-ai-api-v1",
+        debug: null,
+      };
+
+      return new Response(JSON.stringify(malformedResponse), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as unknown as typeof fetch;
+
+    await assert.rejects(
+      async () => {
+        await predictWithAiApi(sampleRequest, {
+          baseUrl: "http://127.0.0.1:8001",
+          fetchImpl: mockFetch,
+        });
+      },
+      (err: unknown) => {
+        assert(err instanceof AiApiError);
+        assert.equal(err.status, 502);
+        assert.equal(err.code, "SCHEMA_MISMATCH");
+        return true;
+      }
+    );
+  });
 });
