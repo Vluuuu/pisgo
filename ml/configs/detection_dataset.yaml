@@ -1,0 +1,88 @@
+project:
+  name: banana-bunch-detection-dataset
+  random_seed: 42
+
+paths:
+  candidate_dir: datasets/raw/banana_bunch_detection/images
+  candidate_manifest: datasets/raw/banana_bunch_detection/candidates.csv
+  handoff_dir: datasets/processed/banana_bunch_detection/annotation_handoff
+  annotation_export: datasets/processed/banana_bunch_detection/annotation_export
+  dataset_dir: datasets/processed/banana_bunch_detection/dataset
+  report_json: datasets/processed/banana_bunch_detection/audit.json
+  report_markdown: datasets/processed/banana_bunch_detection/audit.md
+
+source:
+  api_url: https://commons.wikimedia.org/w/api.php
+  user_agent: PisGoDatasetCollector/1.0 (https://github.com/Novriko/PisGo)
+  accepted_license_prefixes:
+    - CC0
+    - CC BY
+    - CC BY-SA
+  accepted_mime_types:
+    - image/jpeg
+    - image/png
+    - image/webp
+  max_file_bytes: 12582912
+  request_timeout_seconds: 45
+  results_per_request: 50
+  per_query_limit: 180
+  targets:
+    positive_candidate: 800
+    hard_negative_candidate: 400
+  queries:
+    - role: positive_candidate
+      text: banana bunch
+    - role: positive_candidate
+      text: banana bunch tree
+    - role: positive_candidate
+      text: banana plantation fruit
+    - role: positive_candidate
+      text: banana harvest bunch
+    - role: positive_candidate
+      text: Musa acuminata fruit
+    - role: positive_candidate
+      text: Cavendish banana plant fruit
+    - role: positive_candidate
+      text: green banana bunch
+    - role: positive_candidate
+      text: ripe banana bunch
+    - role: positive_candidate
+      text: plantain bunch
+    - role: positive_candidate
+      text: pisang tandan
+    - role: hard_negative_candidate
+      text: banana leaves
+    - role: hard_negative_candidate
+      text: tropical plant leaves
+    - role: hard_negative_candidate
+      text: yellow objects
+    - role: hard_negative_candidate
+      text: yellow traffic sign
+    - role: hard_negative_candidate
+      text: yellow flowers
+    - role: hard_negative_candidate
+      text: other fruit tree
+    - role: hard_negative_candidate
+      text: mango fruit tree
+    - role: hard_negative_candidate
+      text: indoor room plants
+    - role: hard_negative_candidate
+      text: road grass
+    - role: hard_negative_candidate
+      text: garden grass
+
+data:
+  class_id: 0
+  class_name: banana_bunch
+  train_ratio: 0.70
+  validation_ratio: 0.15
+  test_ratio: 0.15
+  task_size: 200
+  near_duplicate_hamming_distance: 3
+  required_qa_categories:
+    - positive
+    - negative
+    - partial
+    - occluded
+    - edge_touching
+    - multi_bunch

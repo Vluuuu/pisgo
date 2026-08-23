@@ -194,6 +194,25 @@ python -m pisgo_ml.cv_predict --config configs/cv_baseline.yaml `
 
 Raw JSON mencakup `predicted_class`, `confidence`, probabilitas empat kelas, preprocessing, versi model, dan waktu inference. Script hanya memuat artifact terlatih dan tidak melakukan training ulang.
 
+### Dataset deteksi `banana_bunch`
+
+Dataset object detection adalah workflow terpisah dan tetap berstatus `YOLO_DATASET_BLOCKED` sampai anotasi dan QA manusia lengkap. Konfigurasi provenance-first berada di `configs/detection_dataset.yaml`:
+
+```powershell
+python -m pisgo_ml.detection_dataset --config configs/detection_dataset.yaml collect
+python -m pisgo_ml.detection_dataset --config configs/detection_dataset.yaml export-review --review-id reviewer-1
+python -m pisgo_ml.detection_dataset --config configs/detection_dataset.yaml import-review --receipt path/to/reviewer-1-receipt.json
+python -m pisgo_ml.detection_dataset --config configs/detection_dataset.yaml curate
+python -m pisgo_ml.detection_dataset --config configs/detection_dataset.yaml curation-status
+python -m pisgo_ml.detection_dataset --config configs/detection_dataset.yaml package
+python -m pisgo_ml.detection_dataset --config configs/detection_dataset.yaml build
+python -m pisgo_ml.detection_dataset --config configs/detection_dataset.yaml audit
+```
+
+`collect` hanya menerima raster original Wikimedia Commons berlisensi `CC0`, `CC BY`, atau `CC BY-SA`, mencatat URL/author/license/hash, dan menolak metadata lisensi yang tidak lengkap. Search role hanya membantu kurasi; bukan label. `export-review` membuat ZIP lokal mandiri berisi review copies dan HTML offline; Reviewer 1 mengekstrak ZIP, membuka `index.html`, memasukkan identitas, meninjau gambar, lalu mengirim kembali `reviewer-1-receipt.json`. `import-review` memvalidasi digest kandidat, ID, keputusan, reviewer, timestamp, duplikasi, dan skema receipt sebelum mengubah hanya state kurasi; baris yang tidak direview tetap unresolved. `curate` tetap menjadi UI localhost untuk Reviewer 2. Semua `needs_review` dan sampel deterministik minimal 10% dari include harus diperiksa manusia kedua yang berbeda, lalu kurasi disetujui eksplisit. `package` tetap fail-closed sampai receipt dan approval lengkap. UI bukan classifier dan workflow tidak menghasilkan box.
+
+Aset dan manifest generated berada di `datasets/raw/banana_bunch_detection/` dan `datasets/processed/banana_bunch_detection/`, yang diabaikan Git. Lolos audit hanya menghasilkan `DATASET_READY_FOR_REVIEW`; training detector tetap langkah terpisah.
+
 ## Batasan
 
 - Performa model tabular berasal dari data sintetis dan tidak boleh digunakan sebagai klaim produksi; dataset longitudinal asli tetap diperlukan.

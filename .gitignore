@@ -26,6 +26,7 @@ venv/
 ml/datasets/raw/
 ml/datasets/processed/
 ml/datasets/images/
+/ml/datasets/local_review_exports/
 ml/runs/
 ml/models/*.pt
 ml/models/*.pth
@@ -45,6 +46,7 @@ tmp/
 Thumbs.db
 
 # Local Claude Code runtime artifacts
+.claude/settings.local.json
 .claude/worktrees/
 .playwright-mcp/
 # Local UI audit / screenshot artifacts
