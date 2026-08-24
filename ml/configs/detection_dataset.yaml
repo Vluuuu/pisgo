@@ -71,6 +71,50 @@ source:
     - role: hard_negative_candidate
       text: garden grass
 
+positive_expansion:
+  new_candidate_target: 850
+  queries:
+    - text: banana bunch plantation field
+      max_accepts: 55
+    - text: banana bunch tree farm
+      max_accepts: 55
+    - text: banana plantation fruit bunch
+      max_accepts: 55
+    - text: harvested banana bunch
+      max_accepts: 55
+    - text: banana bunch harvest transport
+      max_accepts: 55
+    - text: banana bunch market
+      max_accepts: 55
+    - text: green unripe banana bunch
+      max_accepts: 55
+    - text: ripe yellow banana bunch
+      max_accepts: 55
+    - text: plantain bunch plant
+      max_accepts: 55
+    - text: Musa acuminata fruit bunch
+      max_accepts: 55
+    - text: Musa balbisiana fruit bunch
+      max_accepts: 55
+    - text: Cavendish banana bunch plant
+      max_accepts: 55
+    - text: red banana bunch plant
+      max_accepts: 55
+    - text: banana bunch leaves occluded
+      max_accepts: 55
+    - text: hanging banana bunch close up
+      max_accepts: 55
+    - text: banana bunch distant tree
+      max_accepts: 55
+    - text: multiple banana bunches
+      max_accepts: 55
+    - text: banana bunch tropical garden
+      max_accepts: 55
+    - text: banana bunch sunlight shade
+      max_accepts: 55
+    - text: banana bunch truck harvest
+      max_accepts: 55
+
 data:
   class_id: 0
   class_name: banana_bunch

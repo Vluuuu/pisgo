@@ -16,6 +16,7 @@ import shutil
 import urllib.error
 import urllib.parse
 import urllib.request
+import zipfile
 from collections import Counter
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -56,7 +57,7 @@ CANDIDATE_FIELDS = [
     "group_id",
     "curator_decision",
 ]
-CURATION_FIELDS = [
+CURATION_HISTORY_FIELDS = [
     "image_id",
     "first_decision",
     "first_reviewer",
@@ -68,12 +69,42 @@ CURATION_FIELDS = [
     "second_reviewed_at",
     "final_decision",
 ]
+SEMANTICS_CURATION_FIELDS = [
+    "semantics_source_audit_id",
+    "semantics_review_id",
+    "semantics_decision",
+    "semantics_reviewer",
+    "semantics_reviewed_at",
+]
+CURATION_FIELDS = CURATION_HISTORY_FIELDS + SEMANTICS_CURATION_FIELDS
 CURATION_DECISIONS = {"include", "exclude", "needs_review"}
 CURATION_APPROVAL = "curation_approval.json"
 CURATION_RECEIPTS = "curation.csv"
 REVIEW_RECEIPT_VERSION = 1
 REVIEW_EXPORT_DIR = "datasets/local_review_exports"
+EXPANSION_BATCH_DIR = "datasets/raw/banana_bunch_detection/expansion_batches"
 REVIEW_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+POSITIVE_EXPANSION_VERSION = 1
+NEGATIVE_AUDIT_VERSION = 1
+NEGATIVE_AUDIT_DECISIONS = {"confirmed_exclusion", "recommend_re_review"}
+NEGATIVE_SEMANTICS_VERSION = 1
+NEGATIVE_SEMANTICS_DECISIONS = {
+    "include_as_negative",
+    "exclude_as_unusable",
+    "needs_review",
+}
+NEGATIVE_SEMANTICS_TARGET_REASON = "useful_hard_negative"
+NEGATIVE_SEMANTICS_TARGET_COUNT = 76
+NEGATIVE_AUDIT_REASONS = {
+    "useful_hard_negative",
+    "irrelevant_or_unusable",
+    "poor_quality",
+    "broken_or_corrupt",
+    "redundant",
+    "provenance_or_license",
+    "unsuitable_content",
+    "other",
+}
 
 
 class DetectionDatasetError(ValueError):
@@ -246,7 +277,10 @@ def _load_curation(
     rows = _read_csv(receipt_path)
     if not rows:
         return _empty_curation_rows(candidates)
-    _require_fields(receipt_path, rows, CURATION_FIELDS)
+    _require_fields(receipt_path, rows, CURATION_HISTORY_FIELDS)
+    for row in rows:
+        for field in SEMANTICS_CURATION_FIELDS:
+            row.setdefault(field, "")
     candidate_ids = [row["image_id"] for row in candidates]
     receipt_ids = [row["image_id"] for row in rows]
     if len(receipt_ids) != len(set(receipt_ids)):
@@ -260,23 +294,36 @@ def _load_curation(
 def _final_curation_decision(row: dict[str, str]) -> str:
     first = row.get("first_decision", "").strip().lower()
     if not first:
-        return "pending"
-    if row.get("second_required", "").lower() != "true":
-        return first
-    second = row.get("second_decision", "").strip().lower()
-    if not second:
+        decision = "pending"
+    elif row.get("second_required", "").lower() != "true":
+        decision = first
+    else:
+        second = row.get("second_decision", "").strip().lower()
+        if not second:
+            decision = "needs_review"
+        elif row.get("second_reason") == "spot_check":
+            decision = first if second == first else "needs_review"
+        else:
+            decision = second if second in {"include", "exclude"} else "needs_review"
+    semantics = row.get("semantics_decision", "").strip().lower()
+    if semantics == "include_as_negative":
+        return "include"
+    if semantics == "needs_review":
         return "needs_review"
-    if row.get("second_reason") == "spot_check":
-        return first if second == first else "needs_review"
-    return second if second in {"include", "exclude"} else "needs_review"
+    if semantics == "exclude_as_unusable":
+        return decision
+    return decision
 
 
-def _freeze_second_reviews(rows: list[dict[str, str]], seed: int) -> None:
-    if not rows or any(not row.get("first_decision") for row in rows):
+def _freeze_second_reviews(
+    rows: list[dict[str, str]], seed: int, image_ids: set[str] | None = None
+) -> None:
+    scoped = [row for row in rows if image_ids is None or row["image_id"] in image_ids]
+    if not scoped or any(not row.get("first_decision") for row in scoped):
         return
-    if any(row.get("second_required") for row in rows):
+    if any(row.get("second_required") for row in scoped):
         return
-    for row in rows:
+    for row in scoped:
         if row["first_decision"] == "needs_review":
             row["second_required"] = "true"
             row["second_reason"] = "needs_review"
@@ -284,7 +331,7 @@ def _freeze_second_reviews(rows: list[dict[str, str]], seed: int) -> None:
         included = sorted(
             (
                 row
-                for row in rows
+                for row in scoped
                 if row["first_decision"] == "include"
                 and row["candidate_role"] == role
             ),
@@ -481,6 +528,783 @@ def _candidate_set_digest(candidates: list[dict[str, str]]) -> str:
     ).hexdigest()
 
 
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while chunk := handle.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _expansion_batch_path(config: dict[str, Any], batch_id: str) -> Path:
+    if not REVIEW_ID_PATTERN.fullmatch(batch_id):
+        raise DetectionDatasetError(
+            "batch_id must be 1-64 letters, numbers, dots, underscores, or hyphens"
+        )
+    return config["_project_root"] / EXPANSION_BATCH_DIR / batch_id
+
+
+def _load_expansion_batch(
+    config: dict[str, Any], batch_id: str
+) -> tuple[dict[str, Any], list[dict[str, str]]]:
+    batch_path = _expansion_batch_path(config, batch_id)
+    manifest_path = batch_path / "batch_manifest.json"
+    if not manifest_path.is_file():
+        raise DetectionDatasetError(f"Expansion batch manifest not found: {manifest_path}")
+    manifest = _json_file(manifest_path, "expansion batch manifest")
+    candidate_ids = manifest.get("candidate_ids")
+    if (
+        manifest.get("version") != POSITIVE_EXPANSION_VERSION
+        or manifest.get("batch_id") != batch_id
+        or not isinstance(candidate_ids, list)
+        or not candidate_ids
+        or any(not isinstance(candidate_id, str) for candidate_id in candidate_ids)
+        or len(candidate_ids) != len(set(candidate_ids))
+        or manifest.get("candidate_count") != len(candidate_ids)
+    ):
+        raise DetectionDatasetError("Expansion batch manifest is invalid or duplicated")
+
+    dataset_manifest: Path = config["paths"]["candidate_manifest"]
+    candidates = _read_csv(dataset_manifest)
+    _require_fields(dataset_manifest, candidates, CANDIDATE_FIELDS)
+    candidate_by_id = {row["image_id"]: row for row in candidates}
+    if len(candidate_by_id) != len(candidates) or not set(candidate_ids) <= set(
+        candidate_by_id
+    ):
+        raise DetectionDatasetError("Expansion batch references unknown current candidates")
+    selected = [candidate_by_id[candidate_id] for candidate_id in candidate_ids]
+    if (
+        any(
+            row["candidate_role"] != "positive_candidate"
+            or row.get("is_augmented", "").lower() != "false"
+            for row in selected
+        )
+        or manifest.get("bundle_digest") != _candidate_set_digest(selected)
+    ):
+        raise DetectionDatasetError("Expansion batch candidate identity changed")
+
+    curation_path, _ = _curation_paths(dataset_manifest)
+    resulting_state = manifest.get("resulting_state")
+    current_state = {
+        "candidates_sha256": _sha256_file(dataset_manifest),
+        "curation_sha256": _sha256_file(curation_path),
+    }
+    if not isinstance(resulting_state, dict) or any(
+        resulting_state.get(key) != value for key, value in current_state.items()
+    ):
+        raise DetectionDatasetError("Dataset or curation changed after expansion collection")
+    return manifest, selected
+
+
+def _stratified_negative_audit_sample(
+    candidates: list[dict[str, str]],
+    curation_rows: list[dict[str, str]],
+    *,
+    sample_size: int,
+    seed: int,
+) -> list[dict[str, str]]:
+    if sample_size < 1:
+        raise DetectionDatasetError("Audit sample size must be positive")
+    by_id = {row["image_id"]: row for row in candidates}
+    eligible = [
+        by_id[row["image_id"]]
+        for row in curation_rows
+        if by_id[row["image_id"]]["candidate_role"] == "hard_negative_candidate"
+        and _final_curation_decision(row) == "exclude"
+    ]
+    if sample_size > len(eligible):
+        raise DetectionDatasetError(
+            f"Audit sample size exceeds excluded hard negatives: {sample_size}/{len(eligible)}"
+        )
+    strata: dict[str, list[dict[str, str]]] = {}
+    for row in eligible:
+        strata.setdefault(row["search_query"], []).append(row)
+    if sample_size < len(strata):
+        raise DetectionDatasetError(
+            f"Audit sample must cover all {len(strata)} represented search queries"
+        )
+
+    allocation = {query: 1 for query in strata}
+    remaining = sample_size - len(strata)
+    total = len(eligible)
+    quotas = {query: remaining * len(rows) / total for query, rows in strata.items()}
+    for query, quota in quotas.items():
+        allocation[query] += math.floor(quota)
+    unallocated = sample_size - sum(allocation.values())
+    ranked_queries = sorted(
+        strata,
+        key=lambda query: (
+            -(quotas[query] - math.floor(quotas[query])),
+            hashlib.sha256(f"{seed}:{query}".encode()).digest(),
+        ),
+    )
+    for query in ranked_queries:
+        if not unallocated:
+            break
+        if allocation[query] < len(strata[query]):
+            allocation[query] += 1
+            unallocated -= 1
+    while unallocated:
+        available = [query for query in strata if allocation[query] < len(strata[query])]
+        if not available:
+            raise DetectionDatasetError("Unable to allocate the requested audit sample")
+        for query in sorted(available):
+            if not unallocated:
+                break
+            allocation[query] += 1
+            unallocated -= 1
+
+    selected = []
+    for query, rows in sorted(strata.items()):
+        ranked = sorted(
+            rows,
+            key=lambda row: hashlib.sha256(
+                f"{seed}:{query}:{row['image_id']}".encode()
+            ).digest(),
+        )
+        selected.extend(ranked[: allocation[query]])
+    return sorted(selected, key=lambda row: (row["search_query"], row["image_id"]))
+
+
+def _negative_audit_html(manifest: dict[str, Any]) -> str:
+    embedded = json.dumps(manifest, ensure_ascii=False).replace("<", "\\u003c")
+    reasons = json.dumps(sorted(NEGATIVE_AUDIT_REASONS))
+    return f"""<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PisGo Hard-negative Audit</title><style>
+:root{{font:16px system-ui;color:#202018;background:#f4f1e8}}body{{margin:0}}main{{max-width:1100px;margin:auto;padding:18px}}
+section{{background:#fff;padding:16px;margin:12px 0;border-radius:10px}}img{{display:block;max-width:100%;max-height:62vh;margin:auto;background:#222}}
+button,input,select,textarea{{font:inherit;padding:10px}}button{{margin:4px;font-weight:700}}button:disabled{{opacity:.45}}.confirm{{background:#b8e6b8}}.rereview{{background:#f4dc8b}}
+nav{{display:flex;justify-content:space-between;gap:8px}}small{{overflow-wrap:anywhere}}#status{{font-weight:700}}textarea{{display:block;width:min(46rem,90%);min-height:5rem}}
+</style></head><body><main><h1>Hard-negative exclusion audit</h1>
+<p>This audit verifies earlier exclusions. It does not change any curation decision.</p>
+<section><label>Auditor identity <input id="reviewer" autocomplete="name" required></label> <span id="status"></span></section>
+<section><img id="image" alt="Audit candidate image"></section><section><h2 id="candidate"></h2><div id="metadata"></div>
+<p>A useful hard negative may contain no banana bunch. Recommend re-review when this valid image would provide useful detector confusion or background.</p>
+<label>Reason <select id="reason"></select></label><label> Optional notes <textarea id="notes"></textarea></label>
+<div><button class="confirm decision" data-value="confirmed_exclusion">Confirm exclusion</button><button class="rereview decision" data-value="recommend_re_review">Recommend re-review</button></div></section>
+<section><nav><button id="previous">Previous</button><button id="next">Next unresolved</button></nav><p><button id="download">Download audit receipt</button></p></section></main>
+<script id="manifest" type="application/json">{embedded}</script><script>
+const manifest=JSON.parse(document.querySelector('#manifest').textContent),items=manifest.candidates,reasons={reasons};
+const key='pisgo-negative-audit-'+manifest.sample_digest;let saved={{reviewer:'',decisions:{{}}}};try{{saved=JSON.parse(localStorage.getItem(key))||saved}}catch(e){{}}let index=0;
+const reviewer=document.querySelector('#reviewer'),reason=document.querySelector('#reason'),notes=document.querySelector('#notes'),buttons=[...document.querySelectorAll('.decision')];reviewer.value=saved.reviewer||'';
+for(const value of reasons){{const option=document.createElement('option');option.value=value;option.textContent=value.replaceAll('_',' ');reason.append(option)}}
+function persist(){{saved.reviewer=reviewer.value.trim();try{{localStorage.setItem(key,JSON.stringify(saved))}}catch(e){{}}}}
+function render(){{const item=items[index],decision=saved.decisions[item.candidate_id];document.querySelector('#image').src=item.image_file;document.querySelector('#candidate').textContent=`${{index+1}}/${{items.length}} · ${{item.candidate_id}}`;document.querySelector('#metadata').textContent=`Query: ${{item.search_query}} · ${{item.author}} · ${{item.license}}`;reason.value=decision?.reason||reasons[0];notes.value=decision?.notes||'';buttons.forEach(b=>b.disabled=!reviewer.value.trim());document.querySelector('#status').textContent=`Audited ${{Object.keys(saved.decisions).length}}/${{items.length}}`;}}
+reviewer.addEventListener('input',()=>{{persist();render()}});buttons.forEach(b=>b.addEventListener('click',()=>{{if(!reviewer.value.trim())return;const item=items[index];saved.decisions[item.candidate_id]={{candidate_id:item.candidate_id,audit_decision:b.dataset.value,reason:reason.value,notes:notes.value.trim(),reviewed_at:new Date().toISOString()}};persist();const next=items.findIndex((x,i)=>i>index&&!saved.decisions[x.candidate_id]);if(next>=0)index=next;render()}}));
+document.querySelector('#previous').onclick=()=>{{index=Math.max(0,index-1);render()}};document.querySelector('#next').onclick=()=>{{const next=items.findIndex((x,i)=>i>index&&!saved.decisions[x.candidate_id]);index=next>=0?next:index;render()}};
+document.querySelector('#download').onclick=()=>{{const identity=reviewer.value.trim();if(!identity){{alert('Enter auditor identity first.');return}}if(Object.keys(saved.decisions).length!==items.length){{alert('Audit every sampled image first.');return}}persist();const receipt={{version:1,audit_id:manifest.audit_id,sample_digest:manifest.sample_digest,reviewer:identity,decisions:items.map(x=>saved.decisions[x.candidate_id])}};const blob=new Blob([JSON.stringify(receipt,null,2)],{{type:'application/json'}}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=manifest.audit_id+'-receipt.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)}};render();
+</script></body></html>"""
+
+
+def export_negative_audit(
+    config_path: str | Path, audit_id: str, sample_size: int = 40
+) -> dict[str, Any]:
+    if not REVIEW_ID_PATTERN.fullmatch(audit_id):
+        raise DetectionDatasetError(
+            "audit_id must be 1-64 letters, numbers, dots, underscores, or hyphens"
+        )
+    config = load_detection_config(config_path)
+    manifest_path: Path = config["paths"]["candidate_manifest"]
+    candidates = _read_csv(manifest_path)
+    _require_fields(manifest_path, candidates, CANDIDATE_FIELDS)
+    rows = _load_curation(manifest_path, candidates)
+    sample = _stratified_negative_audit_sample(
+        candidates,
+        rows,
+        sample_size=sample_size,
+        seed=int(config["project"]["random_seed"]),
+    )
+    export_root = config["_project_root"] / REVIEW_EXPORT_DIR
+    destination = export_root / audit_id
+    archive = export_root / f"{audit_id}.zip"
+    if destination.exists() or archive.exists():
+        raise DetectionDatasetError(f"Audit export already exists: {destination}")
+    temporary = export_root / f".{audit_id}.tmp"
+    try:
+        images_dir = temporary / "images"
+        images_dir.mkdir(parents=True)
+        exported = []
+        for candidate in sample:
+            source = config["_project_root"] / candidate["local_path"]
+            if not source.is_file():
+                raise DetectionDatasetError(
+                    f"Candidate image not found: {candidate['image_id']}"
+                )
+            image_name = f"{candidate['image_id']}.jpg"
+            with Image.open(source) as image:
+                review_image = ImageOps.exif_transpose(image).convert("RGB")
+                review_image.thumbnail((1600, 1600), Image.Resampling.LANCZOS)
+                review_image.save(images_dir / image_name, "JPEG", quality=85, optimize=True)
+            exported.append(
+                {
+                    "candidate_id": candidate["image_id"],
+                    "search_query": candidate["search_query"],
+                    "source_page_url": candidate["source_page_url"],
+                    "author": candidate["author"],
+                    "license": candidate["license"],
+                    "sha256": candidate["sha256"],
+                    "image_file": f"images/{image_name}",
+                }
+            )
+        sample_digest = _candidate_set_digest(sample)
+        audit_manifest = {
+            "version": NEGATIVE_AUDIT_VERSION,
+            "audit_id": audit_id,
+            "exported_at": datetime.now(timezone.utc).isoformat(),
+            "sample_digest": sample_digest,
+            "sample_size": len(exported),
+            "eligible_excluded_hard_negatives": sum(
+                candidate["candidate_role"] == "hard_negative_candidate"
+                and _final_curation_decision(row) == "exclude"
+                for candidate, row in zip(candidates, rows)
+            ),
+            "strata": dict(Counter(row["search_query"] for row in sample)),
+            "candidates": exported,
+        }
+        write_json(audit_manifest, temporary / "audit_manifest.json")
+        (temporary / "index.html").write_text(
+            _negative_audit_html(audit_manifest), encoding="utf-8"
+        )
+        (temporary / "INSTRUCTIONS.txt").write_text(
+            "PISGO HARD-NEGATIVE EXCLUSION AUDIT\n\n"
+            "1. Extract the ZIP completely and open index.html.\n"
+            "2. Enter your real auditor identity.\n"
+            "3. Inspect every image independently. A useful hard negative may contain no banana bunch.\n"
+            "4. Confirm exclusion or recommend human re-review, with a reason.\n"
+            "5. Download and return the receipt JSON. No curation decision changes in this audit.\n",
+            encoding="utf-8",
+        )
+        temporary.replace(destination)
+        shutil.make_archive(str(export_root / audit_id), "zip", destination)
+    except Exception:
+        shutil.rmtree(temporary, ignore_errors=True)
+        if destination.exists() and not archive.exists():
+            shutil.rmtree(destination, ignore_errors=True)
+        raise
+    return {
+        "audit_id": audit_id,
+        "path": str(destination),
+        "archive": str(archive),
+        "sample_size": len(sample),
+        "strata": dict(Counter(row["search_query"] for row in sample)),
+        "sample_digest": _candidate_set_digest(sample),
+    }
+
+
+def import_negative_audit(
+    config_path: str | Path, receipt_path: str | Path
+) -> dict[str, Any]:
+    path = Path(receipt_path).expanduser().resolve()
+    if not path.is_file():
+        raise DetectionDatasetError(f"Audit receipt not found: {path}")
+    try:
+        receipt = json.loads(
+            path.read_text(encoding="utf-8-sig"),
+            object_pairs_hook=_reject_duplicate_json_keys,
+        )
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise DetectionDatasetError(f"Malformed audit receipt: {error}") from error
+    expected = {"version", "audit_id", "sample_digest", "reviewer", "decisions"}
+    if not isinstance(receipt, dict) or set(receipt) != expected:
+        raise DetectionDatasetError(
+            "Audit receipt contains missing or unexpected top-level fields"
+        )
+    audit_id = receipt["audit_id"]
+    if receipt["version"] != NEGATIVE_AUDIT_VERSION or not isinstance(
+        audit_id, str
+    ) or not REVIEW_ID_PATTERN.fullmatch(audit_id):
+        raise DetectionDatasetError("Invalid audit receipt version or audit_id")
+    reviewer = " ".join(str(receipt["reviewer"]).split())
+    if not reviewer:
+        raise DetectionDatasetError("Auditor identity is required")
+    config = load_detection_config(config_path)
+    export_path = config["_project_root"] / REVIEW_EXPORT_DIR / audit_id
+    manifest_path = export_path / "audit_manifest.json"
+    if not manifest_path.is_file():
+        raise DetectionDatasetError(f"Audit manifest not found: {manifest_path}")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if receipt["sample_digest"] != manifest["sample_digest"]:
+        raise DetectionDatasetError("Audit receipt does not match the exported sample")
+    decisions = receipt["decisions"]
+    if not isinstance(decisions, list):
+        raise DetectionDatasetError("Audit decisions must be a list")
+    expected_ids = {row["candidate_id"] for row in manifest["candidates"]}
+    accepted = []
+    seen = set()
+    fields = {"candidate_id", "audit_decision", "reason", "notes", "reviewed_at"}
+    for item in decisions:
+        if not isinstance(item, dict) or set(item) != fields:
+            raise DetectionDatasetError(
+                "Audit decision contains missing or unexpected fields"
+            )
+        candidate_id = item["candidate_id"]
+        if candidate_id not in expected_ids or candidate_id in seen:
+            raise DetectionDatasetError(f"Unknown or duplicate audit candidate: {candidate_id}")
+        if item["audit_decision"] not in NEGATIVE_AUDIT_DECISIONS:
+            raise DetectionDatasetError("Invalid audit decision")
+        if item["reason"] not in NEGATIVE_AUDIT_REASONS:
+            raise DetectionDatasetError("Invalid audit reason")
+        if not isinstance(item["notes"], str):
+            raise DetectionDatasetError("Audit notes must be text")
+        accepted.append({**item, "reviewed_at": _parse_reviewed_at(item["reviewed_at"])})
+        seen.add(candidate_id)
+    if seen != expected_ids:
+        raise DetectionDatasetError(
+            f"Audit receipt is incomplete: {len(seen)}/{len(expected_ids)}"
+        )
+    candidate_queries = {
+        row["candidate_id"]: row["search_query"] for row in manifest["candidates"]
+    }
+    report = {
+        "audit_id": audit_id,
+        "reviewer": reviewer,
+        "sample_size": len(accepted),
+        "confirmed_exclusions": sum(
+            row["audit_decision"] == "confirmed_exclusion" for row in accepted
+        ),
+        "recommended_for_re_review": sum(
+            row["audit_decision"] == "recommend_re_review" for row in accepted
+        ),
+        "reason_distribution": dict(Counter(row["reason"] for row in accepted)),
+        "query_distribution": dict(
+            Counter(candidate_queries[row["candidate_id"]] for row in accepted)
+        ),
+        "semantic_misunderstanding_detected": any(
+            row["audit_decision"] == "recommend_re_review"
+            and row["reason"] == "useful_hard_negative"
+            for row in accepted
+        ),
+        "curation_decisions_changed": False,
+        "decisions": accepted,
+    }
+    write_json(report, export_path / "audit_report.json")
+    return report
+
+
+def _json_file(path: Path, label: str) -> dict[str, Any]:
+    try:
+        payload = json.loads(
+            path.read_text(encoding="utf-8-sig"),
+            object_pairs_hook=_reject_duplicate_json_keys,
+        )
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise DetectionDatasetError(f"Malformed {label}: {error}") from error
+    if not isinstance(payload, dict):
+        raise DetectionDatasetError(f"{label.capitalize()} must be a JSON object")
+    return payload
+
+
+def _negative_semantics_targets(
+    config: dict[str, Any], source_audit_id: str
+) -> tuple[list[dict[str, str]], dict[str, Any], dict[str, Any]]:
+    if not REVIEW_ID_PATTERN.fullmatch(source_audit_id):
+        raise DetectionDatasetError("Invalid source audit_id")
+    source_path = config["_project_root"] / REVIEW_EXPORT_DIR / source_audit_id
+    source_manifest_path = source_path / "audit_manifest.json"
+    source_report_path = source_path / "audit_report.json"
+    if not source_manifest_path.is_file() or not source_report_path.is_file():
+        raise DetectionDatasetError("Source audit manifest and imported report are required")
+    source_manifest = _json_file(source_manifest_path, "source audit manifest")
+    source_report = _json_file(source_report_path, "source audit report")
+    if (
+        source_manifest.get("audit_id") != source_audit_id
+        or source_report.get("audit_id") != source_audit_id
+    ):
+        raise DetectionDatasetError("Source audit identity does not match")
+    manifest_rows = source_manifest.get("candidates")
+    decisions = source_report.get("decisions")
+    if not isinstance(manifest_rows, list) or not isinstance(decisions, list):
+        raise DetectionDatasetError("Source audit candidates and decisions must be lists")
+    manifest_by_id = {
+        row.get("candidate_id"): row for row in manifest_rows if isinstance(row, dict)
+    }
+    decision_by_id = {
+        row.get("candidate_id"): row for row in decisions if isinstance(row, dict)
+    }
+    if (
+        len(manifest_by_id) != len(manifest_rows)
+        or len(decision_by_id) != len(decisions)
+        or set(manifest_by_id) != set(decision_by_id)
+        or source_report.get("sample_size") != len(decisions)
+    ):
+        raise DetectionDatasetError("Source audit coverage is incomplete or duplicated")
+    target_ids = {
+        candidate_id
+        for candidate_id, decision in decision_by_id.items()
+        if decision.get("reason") == NEGATIVE_SEMANTICS_TARGET_REASON
+        and decision.get("audit_decision") == "confirmed_exclusion"
+    }
+    if len(target_ids) != NEGATIVE_SEMANTICS_TARGET_COUNT:
+        raise DetectionDatasetError(
+            "Source audit must contain exactly "
+            f"{NEGATIVE_SEMANTICS_TARGET_COUNT} confirmed useful hard negatives; "
+            f"found {len(target_ids)}"
+        )
+
+    manifest_path: Path = config["paths"]["candidate_manifest"]
+    candidates = _read_csv(manifest_path)
+    _require_fields(manifest_path, candidates, CANDIDATE_FIELDS)
+    if len(candidates) != len({row["image_id"] for row in candidates}):
+        raise DetectionDatasetError("Candidate manifest contains duplicate image_id rows")
+    rows = _load_curation(manifest_path, candidates)
+    candidate_by_id = {row["image_id"]: row for row in candidates}
+    curation_by_id = {row["image_id"]: row for row in rows}
+    if not target_ids <= set(candidate_by_id):
+        raise DetectionDatasetError("Source audit targets unknown current candidates")
+    for candidate_id in target_ids:
+        candidate = candidate_by_id[candidate_id]
+        if (
+            candidate["candidate_role"] != "hard_negative_candidate"
+            or _final_curation_decision(curation_by_id[candidate_id]) != "exclude"
+            or manifest_by_id[candidate_id].get("sha256") != candidate["sha256"]
+        ):
+            raise DetectionDatasetError(
+                f"Semantics target is no longer an unchanged excluded hard negative: {candidate_id}"
+            )
+    targets = sorted(
+        (candidate_by_id[candidate_id] for candidate_id in target_ids),
+        key=lambda row: row["image_id"],
+    )
+    return targets, source_manifest, source_report
+
+
+def _negative_semantics_html(manifest: dict[str, Any]) -> str:
+    embedded = json.dumps(manifest, ensure_ascii=False).replace("<", "\\u003c")
+    return f"""<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PisGo Verified-negative Review</title><style>
+:root{{font:16px system-ui;color:#202018;background:#f4f1e8}}body{{margin:0}}main{{max-width:1100px;margin:auto;padding:18px}}
+section{{background:#fff;padding:16px;margin:12px 0;border-radius:10px}}img{{display:block;max-width:100%;max-height:62vh;margin:auto;background:#222}}
+button,input{{font:inherit;padding:10px}}button{{margin:4px;font-weight:700}}button:disabled{{opacity:.45}}.include{{background:#b8e6b8}}.exclude{{background:#f0b3ad}}.review{{background:#f4dc8b}}
+nav{{display:flex;justify-content:space-between;gap:8px}}#status{{font-weight:700}}li{{margin:.4rem 0}}
+</style></head><body><main><h1>Targeted hard-negative semantics review</h1>
+<p><strong>Should this image be included in the detector dataset as a VERIFIED NEGATIVE?</strong></p>
+<section><ul><li><strong>include_as_negative:</strong> no visible banana_bunch; usable and useful background/confuser; provenance is valid.</li>
+<li><strong>exclude_as_unusable:</strong> irrelevant, corrupt, unusably poor, redundant without useful diversity, or otherwise unsuitable.</li>
+<li><strong>needs_review:</strong> uncertain whether banana_bunch is present or whether the image is useful/suitable.</li></ul>
+<p><strong>Absence of a banana bunch is NOT a reason to exclude a hard negative. It is the defining property of a valid negative example.</strong></p></section>
+<section><label>Reviewer identity <input id="reviewer" autocomplete="name" required></label> <span id="status"></span></section>
+<section><img id="image" alt="Semantics review candidate"></section><section><h2 id="candidate"></h2><div id="metadata"></div>
+<div><button class="include decision" data-value="include_as_negative">Include as verified negative</button><button class="exclude decision" data-value="exclude_as_unusable">Exclude as unusable</button><button class="review decision" data-value="needs_review">Needs review</button></div></section>
+<section><nav><button id="previous">Previous</button><button id="next">Next unresolved</button></nav><p><button id="download">Download receipt</button></p></section></main>
+<script id="manifest" type="application/json">{embedded}</script><script>
+const manifest=JSON.parse(document.querySelector('#manifest').textContent),items=manifest.candidates;
+const key='pisgo-negative-semantics-'+manifest.bundle_digest;let saved={{reviewer:'',decisions:{{}}}};try{{saved=JSON.parse(localStorage.getItem(key))||saved}}catch(e){{}}let index=0;
+const reviewer=document.querySelector('#reviewer'),buttons=[...document.querySelectorAll('.decision')];reviewer.value=saved.reviewer||'';
+function persist(){{saved.reviewer=reviewer.value.trim();try{{localStorage.setItem(key,JSON.stringify(saved))}}catch(e){{}}}}
+function render(){{const item=items[index],decision=saved.decisions[item.candidate_id]?.semantics_decision;document.querySelector('#image').src=item.image_file;document.querySelector('#candidate').textContent=`${{index+1}}/${{items.length}} · ${{item.candidate_id}}`;const metadata=document.querySelector('#metadata');metadata.textContent=`Query: ${{item.search_query}} · ${{item.author}} · ${{item.license}}`;const source=document.createElement('a');source.href=item.source_page_url;source.textContent=' · Open Wikimedia source';source.target='_blank';source.rel='noopener noreferrer';metadata.append(source);buttons.forEach(b=>{{b.disabled=!reviewer.value.trim();b.style.outline=b.dataset.value===decision?'4px solid #222':''}});document.querySelector('#status').textContent=`Reviewed ${{Object.keys(saved.decisions).length}}/${{items.length}}`;}}
+reviewer.addEventListener('input',()=>{{persist();render()}});buttons.forEach(b=>b.addEventListener('click',()=>{{if(!reviewer.value.trim())return;const item=items[index];saved.decisions[item.candidate_id]={{candidate_id:item.candidate_id,semantics_decision:b.dataset.value,reviewed_at:new Date().toISOString()}};persist();const next=items.findIndex((x,i)=>i>index&&!saved.decisions[x.candidate_id]);if(next>=0)index=next;render()}}));
+document.querySelector('#previous').onclick=()=>{{index=Math.max(0,index-1);render()}};document.querySelector('#next').onclick=()=>{{const next=items.findIndex((x,i)=>i>index&&!saved.decisions[x.candidate_id]);index=next>=0?next:index;render()}};
+document.querySelector('#download').onclick=()=>{{const identity=reviewer.value.trim();if(!identity){{alert('Enter reviewer identity first.');return}}if(Object.keys(saved.decisions).length!==items.length){{alert('Review all 76 images first.');return}}persist();const receipt={{version:1,review_id:manifest.review_id,bundle_digest:manifest.bundle_digest,reviewer:identity,decisions:items.map(x=>saved.decisions[x.candidate_id])}};const blob=new Blob([JSON.stringify(receipt,null,2)],{{type:'application/json'}}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=manifest.review_id+'-receipt.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)}};render();
+</script></body></html>"""
+
+
+def export_negative_semantics_review(
+    config_path: str | Path, review_id: str, source_audit_id: str
+) -> dict[str, Any]:
+    if not REVIEW_ID_PATTERN.fullmatch(review_id):
+        raise DetectionDatasetError("Invalid semantics review_id")
+    config = load_detection_config(config_path)
+    targets, _, _ = _negative_semantics_targets(config, source_audit_id)
+    manifest_path: Path = config["paths"]["candidate_manifest"]
+    receipt_path, approval_path = _curation_paths(manifest_path)
+    source_path = config["_project_root"] / REVIEW_EXPORT_DIR / source_audit_id
+    export_root = config["_project_root"] / REVIEW_EXPORT_DIR
+    destination = export_root / review_id
+    archive = export_root / f"{review_id}.zip"
+    if destination.exists() or archive.exists():
+        raise DetectionDatasetError(f"Semantics review export already exists: {destination}")
+    temporary = export_root / f".{review_id}.tmp"
+    try:
+        images_dir = temporary / "images"
+        images_dir.mkdir(parents=True)
+        exported = []
+        for candidate in targets:
+            source = config["_project_root"] / candidate["local_path"]
+            if not source.is_file() or hashlib.sha256(source.read_bytes()).hexdigest() != candidate["sha256"]:
+                raise DetectionDatasetError(
+                    f"Candidate image is missing or changed: {candidate['image_id']}"
+                )
+            image_name = f"{candidate['image_id']}.jpg"
+            with Image.open(source) as image:
+                review_image = ImageOps.exif_transpose(image).convert("RGB")
+                review_image.thumbnail((1600, 1600), Image.Resampling.LANCZOS)
+                review_image.save(images_dir / image_name, "JPEG", quality=85, optimize=True)
+            exported.append(
+                {
+                    "candidate_id": candidate["image_id"],
+                    "search_query": candidate["search_query"],
+                    "source_page_url": candidate["source_page_url"],
+                    "author": candidate["author"],
+                    "license": candidate["license"],
+                    "sha256": candidate["sha256"],
+                    "image_file": f"images/{image_name}",
+                }
+            )
+        review_manifest = {
+            "version": NEGATIVE_SEMANTICS_VERSION,
+            "review_id": review_id,
+            "source_audit_id": source_audit_id,
+            "exported_at": datetime.now(timezone.utc).isoformat(),
+            "bundle_digest": _candidate_set_digest(targets),
+            "candidate_count": len(exported),
+            "state": {
+                "candidates_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+                "curation_sha256": hashlib.sha256(receipt_path.read_bytes()).hexdigest(),
+                "approval_sha256": hashlib.sha256(approval_path.read_bytes()).hexdigest()
+                if approval_path.is_file()
+                else "",
+                "source_manifest_sha256": hashlib.sha256(
+                    (source_path / "audit_manifest.json").read_bytes()
+                ).hexdigest(),
+                "source_report_sha256": hashlib.sha256(
+                    (source_path / "audit_report.json").read_bytes()
+                ).hexdigest(),
+            },
+            "candidates": exported,
+        }
+        write_json(review_manifest, temporary / "semantics_manifest.json")
+        (temporary / "index.html").write_text(
+            _negative_semantics_html(review_manifest), encoding="utf-8"
+        )
+        (temporary / "INSTRUCTIONS.txt").write_text(
+            "PISGO TARGETED VERIFIED-NEGATIVE REVIEW\n\n"
+            "1. Extract the ZIP and open index.html.\n"
+            "2. Enter your real reviewer identity.\n"
+            "3. Inspect all 76 images and make a fresh explicit decision.\n"
+            "4. No banana_bunch is the defining property of a valid negative, not an exclusion reason.\n"
+            "5. Download and return the receipt JSON. No decision is preselected.\n",
+            encoding="utf-8",
+        )
+        temporary.replace(destination)
+        shutil.make_archive(str(export_root / review_id), "zip", destination)
+    except Exception:
+        shutil.rmtree(temporary, ignore_errors=True)
+        if destination.exists() and not archive.exists():
+            shutil.rmtree(destination, ignore_errors=True)
+        raise
+    return {
+        "review_id": review_id,
+        "source_audit_id": source_audit_id,
+        "path": str(destination),
+        "archive": str(archive),
+        "targeted_candidate_count": len(targets),
+        "bundle_digest": _candidate_set_digest(targets),
+    }
+
+
+def _restore_bytes(path: Path, content: bytes | None) -> None:
+    if content is None:
+        path.unlink(missing_ok=True)
+        return
+    temporary = path.with_suffix(path.suffix + ".rollback")
+    temporary.write_bytes(content)
+    temporary.replace(path)
+
+
+def import_negative_semantics_review(
+    config_path: str | Path, receipt_path: str | Path
+) -> dict[str, Any]:
+    path = Path(receipt_path).expanduser().resolve()
+    if not path.is_file():
+        raise DetectionDatasetError(f"Semantics review receipt not found: {path}")
+    receipt = _json_file(path, "semantics review receipt")
+    expected = {"version", "review_id", "bundle_digest", "reviewer", "decisions"}
+    if set(receipt) != expected:
+        raise DetectionDatasetError(
+            "Semantics receipt contains missing or unexpected top-level fields"
+        )
+    review_id = receipt["review_id"]
+    if (
+        receipt["version"] != NEGATIVE_SEMANTICS_VERSION
+        or not isinstance(review_id, str)
+        or not REVIEW_ID_PATTERN.fullmatch(review_id)
+    ):
+        raise DetectionDatasetError("Invalid semantics receipt version or review_id")
+    if not isinstance(receipt["reviewer"], str):
+        raise DetectionDatasetError("Semantics reviewer identity is required")
+    reviewer = " ".join(receipt["reviewer"].split())
+    if not reviewer:
+        raise DetectionDatasetError("Semantics reviewer identity is required")
+    config = load_detection_config(config_path)
+    export_path = config["_project_root"] / REVIEW_EXPORT_DIR / review_id
+    semantics_manifest_path = export_path / "semantics_manifest.json"
+    semantics_report_path = export_path / "semantics_report.json"
+    if semantics_report_path.exists():
+        raise DetectionDatasetError("Semantics review was already imported; refusing to overwrite history")
+    if not semantics_manifest_path.is_file():
+        raise DetectionDatasetError(f"Semantics manifest not found: {semantics_manifest_path}")
+    manifest = _json_file(semantics_manifest_path, "semantics manifest")
+    if (
+        manifest.get("version") != NEGATIVE_SEMANTICS_VERSION
+        or manifest.get("review_id") != review_id
+        or receipt["bundle_digest"] != manifest.get("bundle_digest")
+        or manifest.get("candidate_count") != NEGATIVE_SEMANTICS_TARGET_COUNT
+    ):
+        raise DetectionDatasetError("Semantics receipt does not match the exact exported bundle")
+    source_audit_id = manifest.get("source_audit_id")
+    if not isinstance(source_audit_id, str):
+        raise DetectionDatasetError("Semantics manifest has no valid source audit")
+
+    manifest_path: Path = config["paths"]["candidate_manifest"]
+    curation_path, approval_path = _curation_paths(manifest_path)
+    source_path = config["_project_root"] / REVIEW_EXPORT_DIR / source_audit_id
+    current_state = {
+        "candidates_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+        "curation_sha256": hashlib.sha256(curation_path.read_bytes()).hexdigest(),
+        "approval_sha256": hashlib.sha256(approval_path.read_bytes()).hexdigest()
+        if approval_path.is_file()
+        else "",
+        "source_manifest_sha256": hashlib.sha256(
+            (source_path / "audit_manifest.json").read_bytes()
+        ).hexdigest(),
+        "source_report_sha256": hashlib.sha256(
+            (source_path / "audit_report.json").read_bytes()
+        ).hexdigest(),
+    }
+    if current_state != manifest.get("state"):
+        raise DetectionDatasetError("Dataset, curation, approval, or source audit changed after export")
+    targets, _, _ = _negative_semantics_targets(config, source_audit_id)
+    expected_ids = {row["image_id"] for row in targets}
+    manifest_ids = {row.get("candidate_id") for row in manifest.get("candidates", [])}
+    if expected_ids != manifest_ids or receipt["bundle_digest"] != _candidate_set_digest(targets):
+        raise DetectionDatasetError("Semantics target set is not exactly the required 76 IDs")
+
+    decisions = receipt["decisions"]
+    if not isinstance(decisions, list):
+        raise DetectionDatasetError("Semantics decisions must be a list")
+    accepted: dict[str, dict[str, str]] = {}
+    fields = {"candidate_id", "semantics_decision", "reviewed_at"}
+    for item in decisions:
+        if not isinstance(item, dict) or set(item) != fields:
+            raise DetectionDatasetError(
+                "Semantics decision contains missing or unexpected fields"
+            )
+        candidate_id = item["candidate_id"]
+        if candidate_id not in expected_ids or candidate_id in accepted:
+            raise DetectionDatasetError(
+                f"Unknown or duplicate semantics candidate: {candidate_id}"
+            )
+        decision = item["semantics_decision"]
+        if decision not in NEGATIVE_SEMANTICS_DECISIONS:
+            raise DetectionDatasetError(f"Invalid semantics decision: {decision}")
+        accepted[candidate_id] = {
+            "semantics_decision": decision,
+            "reviewed_at": _parse_reviewed_at(item["reviewed_at"]),
+        }
+    if set(accepted) != expected_ids:
+        raise DetectionDatasetError(
+            f"Semantics receipt is incomplete: {len(accepted)}/{len(expected_ids)}"
+        )
+
+    candidates = _read_csv(manifest_path)
+    rows = _load_curation(manifest_path, candidates)
+    row_by_id = {row["image_id"]: row for row in rows}
+    if any(
+        any(row_by_id[candidate_id].get(field) for field in SEMANTICS_CURATION_FIELDS)
+        for candidate_id in expected_ids
+    ):
+        raise DetectionDatasetError("Semantics receipt would overwrite existing review history")
+    before_candidates = [dict(row) for row in candidates]
+    before_rows = [dict(row) for row in rows]
+    previous_final = {
+        candidate_id: _final_curation_decision(row_by_id[candidate_id])
+        for candidate_id in expected_ids
+    }
+    for candidate_id, imported in accepted.items():
+        row = row_by_id[candidate_id]
+        row["semantics_source_audit_id"] = source_audit_id
+        row["semantics_review_id"] = review_id
+        row["semantics_decision"] = imported["semantics_decision"]
+        row["semantics_reviewer"] = reviewer
+        row["semantics_reviewed_at"] = imported["reviewed_at"]
+    for row in rows:
+        row["final_decision"] = _final_curation_decision(row)
+
+    snapshots = {
+        manifest_path: manifest_path.read_bytes(),
+        curation_path: curation_path.read_bytes(),
+        approval_path: approval_path.read_bytes() if approval_path.is_file() else None,
+    }
+    prior_approval = (
+        _json_file(approval_path, "prior curation approval") if approval_path.is_file() else None
+    )
+    counts = Counter(item["semantics_decision"] for item in accepted.values())
+    try:
+        _write_curation_state(config, candidates, rows)
+        after_candidates = _read_csv(manifest_path)
+        after_rows = _load_curation(manifest_path, after_candidates)
+        before_candidate_by_id = {row["image_id"]: row for row in before_candidates}
+        after_candidate_by_id = {row["image_id"]: row for row in after_candidates}
+        candidates_integrity = all(
+            all(
+                before_candidate_by_id[image_id][field]
+                == after_candidate_by_id[image_id][field]
+                for field in CANDIDATE_FIELDS
+                if field != "curator_decision"
+            )
+            for image_id in before_candidate_by_id
+        )
+        before_row_by_id = {row["image_id"]: row for row in before_rows}
+        after_row_by_id = {row["image_id"]: row for row in after_rows}
+        curation_history_integrity = all(
+            all(
+                before_row_by_id[image_id].get(field, "")
+                == after_row_by_id[image_id].get(field, "")
+                for field in CURATION_HISTORY_FIELDS
+                if field != "final_decision"
+            )
+            and (
+                image_id in expected_ids
+                or before_row_by_id[image_id] == after_row_by_id[image_id]
+            )
+            for image_id in before_row_by_id
+        )
+        if not candidates_integrity or not curation_history_integrity:
+            raise DetectionDatasetError("Candidate provenance or curation history changed unexpectedly")
+        summary = curation_summary(config_path)
+        report = {
+            "review_id": review_id,
+            "source_audit_id": source_audit_id,
+            "reviewer": reviewer,
+            "targeted_candidate_count": len(accepted),
+            "include_as_negative": counts["include_as_negative"],
+            "exclude_as_unusable": counts["exclude_as_unusable"],
+            "needs_review": counts["needs_review"],
+            "resulting_cumulative_hard_negative_include_count": summary[
+                "hard_negative_include"
+            ],
+            "positive_include_count": summary["positive_include"],
+            "total_unresolved": summary["final_unresolved_count"],
+            "approval_valid": summary["approval_valid"],
+            "new_cumulative_approval_required": True,
+            "candidates_integrity": candidates_integrity,
+            "curation_history_integrity": curation_history_integrity,
+            "prior_approval": prior_approval,
+            "prior_approval_sha256": current_state["approval_sha256"],
+            "decisions": [
+                {
+                    "candidate_id": candidate_id,
+                    "semantics_decision": accepted[candidate_id]["semantics_decision"],
+                    "reviewed_at": accepted[candidate_id]["reviewed_at"],
+                    "previous_final_decision": previous_final[candidate_id],
+                    "resulting_final_decision": _final_curation_decision(
+                        after_row_by_id[candidate_id]
+                    ),
+                }
+                for candidate_id in sorted(accepted)
+            ],
+        }
+        write_json(report, semantics_report_path)
+    except Exception:
+        semantics_report_path.unlink(missing_ok=True)
+        for target_path, content in snapshots.items():
+            _restore_bytes(target_path, content)
+        raise
+    return report
+
+
 def _offline_review_html(manifest: dict[str, Any]) -> str:
     embedded = json.dumps(manifest, ensure_ascii=False).replace("<", "\\u003c")
     return f"""<!doctype html><html><head><meta charset="utf-8">
@@ -514,7 +1338,9 @@ document.querySelector('#download').onclick=()=>{{const identity=reviewer.value.
 </script></body></html>"""
 
 
-def export_offline_review(config_path: str | Path, review_id: str) -> dict[str, Any]:
+def export_offline_review(
+    config_path: str | Path, review_id: str, batch_id: str | None = None
+) -> dict[str, Any]:
     if not REVIEW_ID_PATTERN.fullmatch(review_id):
         raise DetectionDatasetError(
             "review_id must be 1-64 letters, numbers, dots, underscores, or hyphens"
@@ -526,7 +1352,26 @@ def export_offline_review(config_path: str | Path, review_id: str) -> dict[str, 
     if not candidates:
         raise DetectionDatasetError("No candidates are available for review export")
     rows = _load_curation(manifest_path, candidates)
-    if any(row.get("second_required") for row in rows):
+    row_by_id = {row["image_id"]: row for row in rows}
+    batch_manifest = None
+    if batch_id:
+        batch_manifest, selected = _load_expansion_batch(config, batch_id)
+        selected_ids = {row["image_id"] for row in selected}
+        if any(
+            row_by_id[candidate_id]["first_decision"]
+            or any(
+                row_by_id[candidate_id].get(field)
+                for field in CURATION_FIELDS
+                if field not in {"image_id", "final_decision"}
+            )
+            or _final_curation_decision(row_by_id[candidate_id]) != "pending"
+            for candidate_id in selected_ids
+        ):
+            raise DetectionDatasetError(
+                "Expansion batch contains reviewed or non-pending candidates"
+            )
+        candidates = selected
+    elif any(row.get("second_required") for row in rows):
         raise DetectionDatasetError("First-pass review is frozen for second review")
     export_root = config["_project_root"] / REVIEW_EXPORT_DIR
     destination = export_root / review_id
@@ -540,17 +1385,16 @@ def export_offline_review(config_path: str | Path, review_id: str) -> dict[str, 
         exported: list[dict[str, str]] = []
         for candidate in candidates:
             source = config["_project_root"] / candidate["local_path"]
-            if not source.is_file():
+            if not source.is_file() or _sha256_file(source) != candidate["sha256"]:
                 raise DetectionDatasetError(
-                    f"Candidate image not found: {candidate['image_id']}"
+                    f"Candidate image is missing or changed: {candidate['image_id']}"
                 )
             image_name = f"{candidate['image_id']}.jpg"
+            review_path = images_dir / image_name
             with Image.open(source) as image:
                 review_image = ImageOps.exif_transpose(image).convert("RGB")
                 review_image.thumbnail((1600, 1600), Image.Resampling.LANCZOS)
-                review_image.save(
-                    images_dir / image_name, "JPEG", quality=85, optimize=True
-                )
+                review_image.save(review_path, "JPEG", quality=85, optimize=True)
             exported.append(
                 {
                     "candidate_id": candidate["image_id"],
@@ -559,15 +1403,23 @@ def export_offline_review(config_path: str | Path, review_id: str) -> dict[str, 
                     "author": candidate["author"],
                     "license": candidate["license"],
                     "group_id": candidate["group_id"],
+                    "source_sha256": candidate["sha256"],
+                    "review_image_sha256": _sha256_file(review_path),
                     "image_file": f"images/{image_name}",
                 }
             )
         review_manifest = {
             "version": REVIEW_RECEIPT_VERSION,
             "review_id": review_id,
+            "batch_id": batch_id or "",
             "exported_at": datetime.now(timezone.utc).isoformat(),
             "bundle_digest": _candidate_set_digest(candidates),
             "candidate_count": len(exported),
+            "batch_manifest_sha256": _sha256_file(
+                _expansion_batch_path(config, batch_id) / "batch_manifest.json"
+            )
+            if batch_manifest is not None and batch_id is not None
+            else "",
             "candidates": exported,
         }
         write_json(review_manifest, temporary / "review_manifest.json")
@@ -587,17 +1439,63 @@ def export_offline_review(config_path: str | Path, review_id: str) -> dict[str, 
         )
         temporary.replace(destination)
         shutil.make_archive(str(export_root / review_id), "zip", destination)
+        if batch_id:
+            written_manifest = _json_file(
+                destination / "review_manifest.json", "review manifest"
+            )
+            expected_ids = [row["image_id"] for row in candidates]
+            exported_ids = [
+                row.get("candidate_id") for row in written_manifest.get("candidates", [])
+            ]
+            if (
+                written_manifest.get("batch_id") != batch_id
+                or written_manifest.get("candidate_count") != len(expected_ids)
+                or exported_ids != expected_ids
+                or written_manifest.get("bundle_digest")
+                != _candidate_set_digest(candidates)
+            ):
+                raise DetectionDatasetError("Review bundle candidate coverage is invalid")
+            for candidate, exported_row in zip(
+                candidates, written_manifest["candidates"]
+            ):
+                source = config["_project_root"] / candidate["local_path"]
+                review_image = destination / exported_row["image_file"]
+                if (
+                    _sha256_file(source) != exported_row.get("source_sha256")
+                    or not review_image.is_file()
+                    or _sha256_file(review_image)
+                    != exported_row.get("review_image_sha256")
+                ):
+                    raise DetectionDatasetError(
+                        f"Review bundle hash mismatch: {candidate['image_id']}"
+                    )
+            expected_members = {
+                "review_manifest.json",
+                "index.html",
+                "INSTRUCTIONS.txt",
+                *(row["image_file"] for row in written_manifest["candidates"]),
+            }
+            with zipfile.ZipFile(archive) as handle:
+                archive_members = {
+                    name.removeprefix(f"{review_id}/")
+                    for name in handle.namelist()
+                    if not name.endswith("/")
+                }
+            if archive_members != expected_members:
+                raise DetectionDatasetError("Review archive member coverage is invalid")
     except Exception:
         shutil.rmtree(temporary, ignore_errors=True)
-        if destination.exists() and not archive.exists():
-            shutil.rmtree(destination, ignore_errors=True)
+        shutil.rmtree(destination, ignore_errors=True)
+        archive.unlink(missing_ok=True)
         raise
     return {
         "review_id": review_id,
+        "batch_id": batch_id,
         "path": str(destination),
         "archive": str(archive),
         "candidates_exported": len(candidates),
         "bundle_digest": _candidate_set_digest(candidates),
+        "bundle_validated": bool(batch_id),
     }
 
 
@@ -666,13 +1564,39 @@ def import_offline_review(
     manifest_path: Path = config["paths"]["candidate_manifest"]
     candidates = _read_csv(manifest_path)
     _require_fields(manifest_path, candidates, CANDIDATE_FIELDS)
-    if receipt["bundle_digest"] != _candidate_set_digest(candidates):
-        raise DetectionDatasetError("Receipt does not match the current candidate set")
     candidate_by_id = {row["image_id"]: row for row in candidates}
     if len(candidate_by_id) != len(candidates):
         raise DetectionDatasetError("Candidate manifest contains duplicate image_id rows")
+    review_manifest_path = (
+        config["_project_root"]
+        / REVIEW_EXPORT_DIR
+        / receipt["review_id"]
+        / "review_manifest.json"
+    )
+    batch_ids: set[str] | None = None
+    if review_manifest_path.is_file():
+        review_manifest = _json_file(review_manifest_path, "review manifest")
+        batch_id = review_manifest.get("batch_id")
+        if batch_id:
+            _, batch_candidates = _load_expansion_batch(config, str(batch_id))
+            review_ids = [
+                row.get("candidate_id")
+                for row in review_manifest.get("candidates", [])
+                if isinstance(row, dict)
+            ]
+            expected_ids = [row["image_id"] for row in batch_candidates]
+            if (
+                review_manifest.get("review_id") != receipt["review_id"]
+                or review_manifest.get("bundle_digest") != receipt["bundle_digest"]
+                or receipt["bundle_digest"] != _candidate_set_digest(batch_candidates)
+                or review_ids != expected_ids
+            ):
+                raise DetectionDatasetError("Receipt does not match the expansion batch")
+            batch_ids = set(expected_ids)
+    if batch_ids is None and receipt["bundle_digest"] != _candidate_set_digest(candidates):
+        raise DetectionDatasetError("Receipt does not match the current candidate set")
     rows = _load_curation(manifest_path, candidates)
-    if any(row.get("second_required") for row in rows):
+    if batch_ids is None and any(row.get("second_required") for row in rows):
         raise DetectionDatasetError("First-pass review is frozen for second review")
     receipt_by_id: dict[str, dict[str, str]] = {}
     allowed_decision_fields = {"candidate_id", "curator_decision", "reviewed_at"}
@@ -684,6 +1608,8 @@ def import_offline_review(
         candidate_id = item["candidate_id"]
         if not isinstance(candidate_id, str) or candidate_id not in candidate_by_id:
             raise DetectionDatasetError(f"Unknown candidate ID: {candidate_id}")
+        if batch_ids is not None and candidate_id not in batch_ids:
+            raise DetectionDatasetError(f"Candidate is outside the expansion batch: {candidate_id}")
         if candidate_id in receipt_by_id:
             raise DetectionDatasetError(f"Duplicate receipt decision: {candidate_id}")
         decision = item["curator_decision"]
@@ -709,11 +1635,15 @@ def import_offline_review(
         row["first_decision"] = imported["decision"]
         row["first_reviewer"] = reviewer
         row["first_reviewed_at"] = imported["reviewed_at"]
+    if batch_ids is not None and set(receipt_by_id) != batch_ids:
+        raise DetectionDatasetError("Expansion receipt must review every batch candidate")
     enriched = [
         {**row, "candidate_role": candidate_by_id[row["image_id"]]["candidate_role"]}
         for row in rows
     ]
-    _freeze_second_reviews(enriched, int(config["project"]["random_seed"]))
+    _freeze_second_reviews(
+        enriched, int(config["project"]["random_seed"]), batch_ids
+    )
     for row, frozen in zip(rows, enriched):
         row["second_required"] = frozen["second_required"]
         row["second_reason"] = frozen["second_reason"]
@@ -792,7 +1722,11 @@ def serve_curation(config_path: str | Path, port: int = 8765) -> None:
                 body = self._summary_page(summary)
             else:
                 query = urllib.parse.parse_qs(parsed.query)
-                index = min(int(query.get("index", ["0"])[0]), len(queue) - 1)
+                try:
+                    requested_index = int(query.get("index", ["0"])[0])
+                except (TypeError, ValueError):
+                    requested_index = 0
+                index = min(max(requested_index, 0), len(queue) - 1)
                 receipt = queue[index]
                 candidate = by_id[receipt["image_id"]]
                 body = self._review_page(candidate, receipt, stage, index, len(queue), summary)
@@ -855,9 +1789,14 @@ def serve_curation(config_path: str | Path, port: int = 8765) -> None:
                     "Do not copy it blindly—inspect the image independently.</p>"
                 )
             escaped_id = html.escape(candidate["image_id"])
+            previous_link = (
+                f'<a class="nav" href="/?index={index - 1}">Previous</a>' if index else ""
+            )
+            next_link = f'<a class="nav" href="/?index={index + 1}">Next</a>'
             return f"""<!doctype html><html><head><meta charset=utf-8><title>PisGo Curation</title>
-<style>body{{font:16px system-ui;margin:0;background:#f4f1e8;color:#202018}}main{{max-width:1100px;margin:auto;padding:20px}}img{{display:block;max-width:100%;max-height:65vh;margin:auto;background:#222}}section{{background:white;padding:18px;margin:14px 0;border-radius:10px}}button{{padding:12px 18px;margin:5px;font-weight:700}}input{{padding:10px;width:min(28rem,90%)}}.include{{background:#b8e6b8}}.exclude{{background:#f0b3ad}}.review{{background:#f4dc8b}}small{{overflow-wrap:anywhere}}</style></head><body><main>
+<style>body{{font:16px system-ui;margin:0;background:#f4f1e8;color:#202018}}main{{max-width:1100px;margin:auto;padding:20px}}img{{display:block;max-width:100%;max-height:65vh;margin:auto;background:#222}}section{{background:white;padding:18px;margin:14px 0;border-radius:10px}}button,.nav{{display:inline-block;padding:12px 18px;margin:5px;font-weight:700;color:#202018}}input{{padding:10px;width:min(28rem,90%)}}.include{{background:#b8e6b8}}.exclude{{background:#f0b3ad}}.review{{background:#f4dc8b}}small{{overflow-wrap:anywhere}}</style></head><body><main>
 <h1>Human curation — {html.escape(stage)} pass</h1><p>{index + 1}/{total} in this queue · first reviewed {summary['total_reviewed']}/{len(_read_csv(manifest_path))}</p>
+<nav>{previous_link}{next_link}</nav>
 <section><img src="/image/{urllib.parse.quote(candidate['image_id'])}" alt="Candidate {escaped_id}"></section>
 <section><h2>{escaped_id}</h2><p><strong>Role:</strong> {html.escape(role)}</p><p>{html.escape(criteria)}</p>{reason}
 <p><strong>Source:</strong> <a href="{html.escape(candidate['source_page_url'], quote=True)}" target="_blank" rel="noopener noreferrer">Wikimedia Commons</a><br><small>{html.escape(candidate['author'])} · {html.escape(candidate['license'])} · group {html.escape(candidate['group_id'])}</small></p>
@@ -915,6 +1854,306 @@ def _write_report(
         lines.append("- None.")
     path = ensure_parent(config["paths"]["report_markdown"])
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return report
+
+
+def collect_positive_expansion(
+    config_path: str | Path, batch_id: str
+) -> dict[str, Any]:
+    config = load_detection_config(config_path)
+    batch_path = _expansion_batch_path(config, batch_id)
+    temporary_batch = batch_path.with_name(f".{batch_id}.tmp")
+    if batch_path.exists() or temporary_batch.exists():
+        raise DetectionDatasetError(f"Expansion batch already exists: {batch_path}")
+
+    expansion = config.get("positive_expansion")
+    if not isinstance(expansion, dict):
+        raise DetectionDatasetError("Missing positive_expansion configuration")
+    try:
+        target = int(expansion["new_candidate_target"])
+        query_configs = expansion["queries"]
+    except (KeyError, TypeError, ValueError) as error:
+        raise DetectionDatasetError("Invalid positive_expansion configuration") from error
+    if target < 1 or not isinstance(query_configs, list) or not query_configs:
+        raise DetectionDatasetError("Positive expansion target and queries are required")
+    queries: list[tuple[str, int]] = []
+    for query in query_configs:
+        if not isinstance(query, dict):
+            raise DetectionDatasetError("Each positive expansion query must be an object")
+        text = " ".join(str(query.get("text", "")).split())
+        try:
+            maximum = int(query["max_accepts"])
+        except (KeyError, TypeError, ValueError) as error:
+            raise DetectionDatasetError(
+                "Each positive expansion query requires max_accepts"
+            ) from error
+        if not text or maximum < 1:
+            raise DetectionDatasetError("Positive expansion queries and caps must be positive")
+        queries.append((text, maximum))
+    if sum(maximum for _, maximum in queries) < target:
+        raise DetectionDatasetError("Positive expansion query caps cannot reach the target")
+
+    manifest_path: Path = config["paths"]["candidate_manifest"]
+    curation_path, approval_path = _curation_paths(manifest_path)
+    candidates = _read_csv(manifest_path)
+    _require_fields(manifest_path, candidates, CANDIDATE_FIELDS)
+    if not candidates or len(candidates) != len({row["image_id"] for row in candidates}):
+        raise DetectionDatasetError("An existing unique candidate manifest is required")
+    curation_rows = _load_curation(manifest_path, candidates)
+    if not curation_path.is_file():
+        raise DetectionDatasetError("An existing curation history file is required")
+    missing_or_changed = []
+    for candidate in candidates:
+        source = config["_project_root"] / candidate["local_path"]
+        if not source.is_file() or _sha256_file(source) != candidate["sha256"]:
+            missing_or_changed.append(candidate["image_id"])
+    if missing_or_changed:
+        raise DetectionDatasetError(
+            "Existing candidate images are missing or changed: "
+            + ", ".join(missing_or_changed[:3])
+        )
+
+    snapshots = {
+        manifest_path: manifest_path.read_bytes(),
+        curation_path: curation_path.read_bytes() if curation_path.is_file() else None,
+        approval_path: approval_path.read_bytes() if approval_path.is_file() else None,
+    }
+    prior_approval = (
+        _json_file(approval_path, "prior curation approval")
+        if approval_path.is_file()
+        else None
+    )
+    baseline_state = {
+        "candidate_count": len(candidates),
+        "positive_candidate_count": sum(
+            row["candidate_role"] == "positive_candidate" for row in candidates
+        ),
+        "candidates_sha256": _sha256_file(manifest_path),
+        "curation_sha256": _sha256_file(curation_path),
+        "approval_sha256": _sha256_file(approval_path)
+        if approval_path.is_file()
+        else "",
+        "approval": prior_approval,
+    }
+    before_candidates = [dict(row) for row in candidates]
+    before_curation = [dict(row) for row in curation_rows]
+    known_titles = {row["source_item_id"] for row in candidates}
+    attempted_titles: set[str] = set()
+    known_sha = {row["sha256"] for row in candidates}
+    try:
+        known_hashes = [
+            int(row["perceptual_hash"], 16)
+            for row in candidates
+            if row.get("perceptual_hash")
+        ]
+    except ValueError as error:
+        raise DetectionDatasetError("Existing candidate has an invalid perceptual hash") from error
+
+    accepted: list[dict[str, str]] = []
+    rejected: Counter[str] = Counter()
+    accepted_by_query: Counter[str] = Counter()
+    query_failures: list[dict[str, str]] = []
+    moved_images: list[Path] = []
+    distance = int(config["data"]["near_duplicate_hamming_distance"])
+    staged_images = temporary_batch / "images"
+    try:
+        staged_images.mkdir(parents=True)
+        for query, query_cap in queries:
+            if len(accepted) >= target:
+                break
+            query_accepted = 0
+            try:
+                pages = _search_pages(config, query)
+                for page in pages:
+                    if len(accepted) >= target or query_accepted >= query_cap:
+                        break
+                    title = str(page.get("title", ""))
+                    image_info = (page.get("imageinfo") or [{}])[0]
+                    metadata = image_info.get("extmetadata") or {}
+                    mime_type = str(image_info.get("mime", "")).lower()
+                    license_name = _metadata_value(metadata, "LicenseShortName")
+                    author = _metadata_value(metadata, "Artist")
+                    license_url = _metadata_value(metadata, "LicenseUrl")
+                    if not title:
+                        rejected["missing_source_identity"] += 1
+                        continue
+                    if title in known_titles:
+                        rejected["duplicate_commons_page"] += 1
+                        continue
+                    if title in attempted_titles:
+                        rejected["repeated_search_result"] += 1
+                        continue
+                    attempted_titles.add(title)
+                    if mime_type not in config["source"]["accepted_mime_types"]:
+                        rejected["unsupported_mime_type"] += 1
+                        continue
+                    if int(image_info.get("size") or 0) > int(
+                        config["source"]["max_file_bytes"]
+                    ):
+                        rejected["file_too_large"] += 1
+                        continue
+                    if not accepted_license(
+                        license_name, config["source"]["accepted_license_prefixes"]
+                    ):
+                        rejected["license_not_allowed"] += 1
+                        continue
+                    if not author or not license_url:
+                        rejected["incomplete_provenance"] += 1
+                        continue
+                    image_url = str(image_info.get("url", ""))
+                    extension = _extension(mime_type)
+                    page_id = page.get("pageid")
+                    if not image_url or not extension or not isinstance(page_id, int):
+                        rejected["missing_image_url"] += 1
+                        continue
+
+                    image_id = f"commons-{page_id}"
+                    destination = staged_images / f"{image_id}{extension}"
+                    if destination.exists() or (
+                        config["paths"]["candidate_dir"] / destination.name
+                    ).exists():
+                        rejected["duplicate_commons_page"] += 1
+                        continue
+                    try:
+                        sha256, size = _download(image_url, destination, config)
+                        perceptual_hash, width, height = _perceptual_hash(destination)
+                    except (OSError, ValueError, urllib.error.URLError):
+                        destination.unlink(missing_ok=True)
+                        rejected["download_or_image_validation_failed"] += 1
+                        continue
+                    hash_value = int(perceptual_hash, 16)
+                    if sha256 in known_sha:
+                        destination.unlink(missing_ok=True)
+                        rejected["duplicate_content"] += 1
+                        continue
+                    if any(
+                        (hash_value ^ known).bit_count() <= distance
+                        for known in known_hashes
+                    ):
+                        destination.unlink(missing_ok=True)
+                        rejected["near_duplicate_content"] += 1
+                        continue
+
+                    final_path = config["paths"]["candidate_dir"] / destination.name
+                    accepted.append(
+                        {
+                            "image_id": image_id,
+                            "source_provider": "Wikimedia Commons",
+                            "source_item_id": title,
+                            "source_page_url": _commons_page(title),
+                            "original_url": image_url,
+                            "author": author,
+                            "license": license_name,
+                            "license_url": license_url,
+                            "retrieved_at": datetime.now(timezone.utc).isoformat(),
+                            "provenance_status": "verified",
+                            "search_query": query,
+                            "candidate_role": "positive_candidate",
+                            "local_path": final_path.relative_to(
+                                config["_project_root"]
+                            ).as_posix(),
+                            "mime_type": mime_type,
+                            "width": width,
+                            "height": height,
+                            "bytes": size,
+                            "sha256": sha256,
+                            "perceptual_hash": perceptual_hash,
+                            "is_augmented": "false",
+                            # ponytail: a Commons item is one specimen until a curator links related views.
+                            "specimen_id": image_id,
+                            "group_id": image_id,
+                            "curator_decision": "pending",
+                        }
+                    )
+                    known_titles.add(title)
+                    known_sha.add(sha256)
+                    known_hashes.append(hash_value)
+                    query_accepted += 1
+                    accepted_by_query[query] += 1
+            except (OSError, ValueError, urllib.error.URLError, json.JSONDecodeError) as error:
+                query_failures.append({"query": query, "error": str(error)})
+
+        if not accepted:
+            raise DetectionDatasetError("No valid positive candidates were accepted")
+        candidate_dir: Path = config["paths"]["candidate_dir"]
+        candidate_dir.mkdir(parents=True, exist_ok=True)
+        for row in accepted:
+            source = staged_images / Path(row["local_path"]).name
+            destination = config["_project_root"] / row["local_path"]
+            source.replace(destination)
+            moved_images.append(destination)
+
+        all_candidates = candidates + accepted
+        all_curation = curation_rows + _empty_curation_rows(accepted)
+        _write_curation_state(config, all_candidates, all_curation)
+        after_candidates = _read_csv(manifest_path)
+        after_curation = _load_curation(manifest_path, after_candidates)
+        if (
+            after_candidates[: len(before_candidates)] != before_candidates
+            or after_curation[: len(before_curation)] != before_curation
+        ):
+            raise DetectionDatasetError("Existing candidate or review history changed")
+        new_curation = after_curation[len(before_curation) :]
+        if (
+            [row["image_id"] for row in after_candidates[len(before_candidates) :]]
+            != [row["image_id"] for row in accepted]
+            or any(
+                any(value for field, value in row.items() if field != "image_id")
+                for row in new_curation
+            )
+            or any(
+                row["curator_decision"] != "pending"
+                for row in after_candidates[len(before_candidates) :]
+            )
+        ):
+            raise DetectionDatasetError("New expansion rows are not blank pending reviews")
+
+        resulting_state = {
+            "candidates_sha256": _sha256_file(manifest_path),
+            "curation_sha256": _sha256_file(curation_path),
+        }
+        report = {
+            "version": POSITIVE_EXPANSION_VERSION,
+            "batch_id": batch_id,
+            "collected_at": datetime.now(timezone.utc).isoformat(),
+            "candidate_role": "positive_candidate",
+            "new_candidate_target": target,
+            "target_met": len(accepted) >= target,
+            "target_shortfall": max(0, target - len(accepted)),
+            "candidate_count": len(accepted),
+            "cumulative_positive_candidate_count": baseline_state[
+                "positive_candidate_count"
+            ]
+            + len(accepted),
+            "candidate_ids": [row["image_id"] for row in accepted],
+            "bundle_digest": _candidate_set_digest(accepted),
+            "accepted_by_query": dict(accepted_by_query),
+            "duplicate_removals": {
+                "exact_source": rejected["duplicate_commons_page"]
+                + rejected["repeated_search_result"],
+                "exact_content": rejected["duplicate_content"],
+                "near_duplicate": rejected["near_duplicate_content"],
+            },
+            "provenance_license_rejections": {
+                "license": rejected["license_not_allowed"],
+                "provenance": rejected["incomplete_provenance"],
+            },
+            "rejections": dict(sorted(rejected.items())),
+            "query_failures": query_failures,
+            "baseline_state": baseline_state,
+            "resulting_state": resulting_state,
+        }
+        shutil.rmtree(staged_images)
+        write_json(report, temporary_batch / "batch_manifest.json")
+        temporary_batch.replace(batch_path)
+    except Exception:
+        for state_path, content in snapshots.items():
+            _restore_bytes(state_path, content)
+        for image_path in moved_images:
+            image_path.unlink(missing_ok=True)
+        shutil.rmtree(temporary_batch, ignore_errors=True)
+        shutil.rmtree(batch_path, ignore_errors=True)
+        raise
     return report
 
 
@@ -1585,8 +2824,13 @@ def main() -> None:
         "command",
         choices=(
             "collect",
+            "collect-positive-expansion",
             "export-review",
             "import-review",
+            "export-negative-audit",
+            "import-negative-audit",
+            "export-negative-semantics-review",
+            "import-negative-semantics-review",
             "curate",
             "curation-status",
             "package",
@@ -1597,12 +2841,54 @@ def main() -> None:
     parser.add_argument("--config", default="configs/detection_dataset.yaml")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--review-id")
+    parser.add_argument("--batch-id")
+    parser.add_argument("--audit-id")
+    parser.add_argument("--source-audit-id")
+    parser.add_argument("--sample-size", type=int, default=40)
     parser.add_argument("--receipt")
     args = parser.parse_args()
+    if args.command == "export-negative-audit":
+        if not args.audit_id:
+            parser.error("export-negative-audit requires --audit-id")
+        result = export_negative_audit(
+            args.config, args.audit_id, sample_size=args.sample_size
+        )
+        print(json.dumps(result, indent=2))
+        return
+    if args.command == "import-negative-audit":
+        if not args.receipt:
+            parser.error("import-negative-audit requires --receipt")
+        result = import_negative_audit(args.config, args.receipt)
+        print(json.dumps(result, indent=2))
+        return
+    if args.command == "export-negative-semantics-review":
+        if not args.review_id or not args.source_audit_id:
+            parser.error(
+                "export-negative-semantics-review requires --review-id and --source-audit-id"
+            )
+        result = export_negative_semantics_review(
+            args.config, args.review_id, args.source_audit_id
+        )
+        print(json.dumps(result, indent=2))
+        return
+    if args.command == "import-negative-semantics-review":
+        if not args.receipt:
+            parser.error("import-negative-semantics-review requires --receipt")
+        result = import_negative_semantics_review(args.config, args.receipt)
+        print(json.dumps(result, indent=2))
+        return
+    if args.command == "collect-positive-expansion":
+        if not args.batch_id:
+            parser.error("collect-positive-expansion requires --batch-id")
+        result = collect_positive_expansion(args.config, args.batch_id)
+        print(json.dumps(result, indent=2))
+        return
     if args.command == "export-review":
         if not args.review_id:
             parser.error("export-review requires --review-id")
-        result = export_offline_review(args.config, args.review_id)
+        result = export_offline_review(
+            args.config, args.review_id, batch_id=args.batch_id
+        )
         print(json.dumps(result, indent=2))
         return
     if args.command == "import-review":
