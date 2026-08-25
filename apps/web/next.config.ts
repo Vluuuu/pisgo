@@ -8,4 +8,6 @@ const nextConfig: NextConfig = {
 
 export default nextConfig;
 
-import('@opennextjs/cloudflare').then(m => m.initOpenNextCloudflareForDev());
+if (process.env.NODE_ENV !== "production") {
+  import('@opennextjs/cloudflare').then(m => m.initOpenNextCloudflareForDev?.()).catch(() => {});
+}

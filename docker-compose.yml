@@ -1,0 +1,38 @@
+services:
+  ai-api:
+    build:
+      context: .
+      dockerfile: services/ai-api/Dockerfile
+    container_name: pisgo-ai-api
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./ml/models:/app/ml/models:ro
+    environment:
+      - CV_MODEL_PATH=/app/ml/models/cavendish_maturity_classifier.joblib
+      - DETECTOR_MODEL_PATH=/app/ml/models/banana_bunch_yolo11n_emergency_v1.pt
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8001/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    container_name: pisgo-web
+    ports:
+      - "3000:3000"
+    environment:
+      - AI_API_BASE_URL=http://ai-api:8001
+      - GEOAPIFY_API_KEY=${GEOAPIFY_API_KEY:-}
+      - TOMTOM_API_KEY=${TOMTOM_API_KEY:-}
+      - FOURSQUARE_API_KEY=${FOURSQUARE_API_KEY:-}
+      - NEXT_PUBLIC_APP_NAME=PisGo
+    depends_on:
+      ai-api:
+        condition: service_healthy
+    restart: unless-stopped
