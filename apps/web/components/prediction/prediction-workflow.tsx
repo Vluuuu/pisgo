@@ -300,7 +300,20 @@ export function PredictionWorkflow() {
 
         <fieldset className="control-group specimen-controls">
           <legend><span className="section-number" aria-hidden="true">02</span>Foto pisang</legend>
-          <ImageUpload value={image} onChange={(file) => { setImage(file); setResult(null); setErrors((current) => ({ ...current, image: undefined })); }} error={errors.image} />
+          <ImageUpload
+            value={image}
+            onChange={(file) => {
+              setImage(file);
+              setResult(null);
+              setErrors((current) => ({ ...current, image: undefined }));
+            }}
+            onPhotoDateChange={(dateStr) => {
+              setPhotoDate(dateStr);
+              setResult(null);
+              setErrors((current) => ({ ...current, photoDate: undefined }));
+            }}
+            error={errors.image}
+          />
 
           <DateField
             id="photo-date"
