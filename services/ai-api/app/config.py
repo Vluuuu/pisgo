@@ -36,6 +36,9 @@ MATURITY_CLASS_SCALE: dict[str, float] = {
 # 1-7 UI scale. Placeholder pending real data; documented as such.
 MATURITY_RATE_PER_DAY: float = 0.15
 
+# MVP biological-age normalization window, not a field-calibrated harvest claim.
+EXPECTED_FLOWERING_TO_HARVEST_DAYS: int = 120
+
 DETECTOR_MODEL_VERSION: str = "banana-bunch-yolo11n-emergency-v1"
 DETECTOR_CONFIDENCE_THRESHOLD: float = 0.25
 
@@ -70,6 +73,7 @@ class Settings:
     detector_confidence_threshold: float = DETECTOR_CONFIDENCE_THRESHOLD
     maturity_class_scale: dict[str, float] = field(default_factory=_load_class_scale)
     maturity_rate_per_day: float = MATURITY_RATE_PER_DAY
+    expected_flowering_to_harvest_days: int = EXPECTED_FLOWERING_TO_HARVEST_DAYS
     adapter_version: str = ADAPTER_VERSION
     cultivar: str = CULTIVAR
     max_image_bytes: int = MAX_IMAGE_BYTES
@@ -90,4 +94,8 @@ def load_settings() -> Settings:
         )
     if os.environ.get("MATURITY_RATE_PER_DAY"):
         overrides["maturity_rate_per_day"] = float(os.environ["MATURITY_RATE_PER_DAY"])
+    if os.environ.get("EXPECTED_FLOWERING_TO_HARVEST_DAYS"):
+        overrides["expected_flowering_to_harvest_days"] = int(
+            os.environ["EXPECTED_FLOWERING_TO_HARVEST_DAYS"]
+        )
     return Settings(**overrides)
