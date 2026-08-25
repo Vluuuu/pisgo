@@ -1,4 +1,4 @@
-# Model Artifacts
+# PisGO Model Artifacts
 
 Model weights and serialized classifiers are intentionally excluded from the Git repository.
 

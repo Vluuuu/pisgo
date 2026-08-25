@@ -1,6 +1,6 @@
 # AI API Contract
 
-This document defines the interface between the PisGo web application and the FastAPI AI inference service.
+This document defines the interface between the PisGO web application and the FastAPI AI inference service.
 
 ## Prediction Endpoint
 

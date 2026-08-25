@@ -1,5 +1,7 @@
 # Dataset Guidelines
 
+> **Note**: This document outlines the recommended longitudinal agronomic dataset specification for future on-field calibration, not the current YOLO presence gate dataset (which is documented in `ml/datasets/README.md`).
+
 ## Scope
 
 Initial MVP focuses on **Cavendish banana** only.

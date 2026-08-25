@@ -1,5 +1,7 @@
 # YOLO Annotation Contract
 
+> **Historical Note**: This document records the original annotation-gate contract and data quality specification. The `YOLO_DATASET_BLOCKED` status below describes the original standard dataset workflow before the competition emergency baseline was finalized. The currently deployed detector and its evaluated dataset are documented in `ml/README.md` and `ml/datasets/README.md`.
+
 ## Status
 
 `YOLO_DATASET_BLOCKED`: training is prohibited until a verified bounding-box export satisfies this contract. The current Augmented Banana Variety Dataset contains image-level maturity labels only; it has no verified object annotations.

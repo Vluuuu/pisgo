@@ -1,6 +1,6 @@
-# PisGo AI API
+# PisGO AI API
 
-FastAPI adapter service between PisGo and machine learning model artifacts.
+FastAPI adapter service between PisGO and machine learning model artifacts.
 
 ## Scope & Interpretation
 

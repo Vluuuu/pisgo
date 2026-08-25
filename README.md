@@ -4,7 +4,6 @@
 
 [![Production Demo](https://img.shields.io/badge/Demo-pisgo.my.id-brightgreen)](https://pisgo.my.id)
 [![Model Artifacts](https://img.shields.io/badge/Release-aic--preliminary--models--v1-blue)](https://github.com/Vluuuu/pisgo/releases/tag/aic-preliminary-models-v1)
-[![COMPFEST 18](https://img.shields.io/badge/COMPFEST%2018-AI%20Innovation%20Challenge-orange)](#)
 
 PisGO is an intelligent decision-support platform designed to help Cavendish banana growers and distribution networks plan harvest and dispatch timing based on a desired maturity level at destination. By combining computer vision presence gating, visual ripeness classification, contextual biological-age tracking, and route-aware transit modeling, PisGO delivers projected harvest-to-arrival schedule recommendations.
 
@@ -12,7 +11,7 @@ PisGO is an intelligent decision-support platform designed to help Cavendish ban
 
 ## What is PisGO?
 
-PisGO transforms subjective, disconnected banana harvesting decisions into a data-driven planning workflow. Rather than guessing harvest timing or ignoring transit ripening, users provide a bunch photo, flowering date, target maturity, and route parameters. PisGO inspects the photo, estimates visual ripeness, tracks biological age progress, and calculates transit duration to deliver an actionable harvest, shipping, and arrival planning estimate.
+PisGO transforms subjective, disconnected banana harvesting decisions into a data-driven planning workflow. Rather than guessing harvest timing or ignoring transit ripening, users provide a bunch photo, flowering date, target maturity, and route parameters. PisGO inspects the photo, estimates visual ripeness, computes Days After Flowering (DAF) as biological-age context, and calculates transit duration to deliver an actionable harvest, shipping, and arrival planning estimate.
 
 ---
 
@@ -21,9 +20,9 @@ PisGO transforms subjective, disconnected banana harvesting decisions into a dat
 * **YOLO Banana Bunch Presence Gate**: Frozen YOLOv11n object detector verifies bunch presence before running maturity inference.
 * **4-Class Visual Maturity Classifier**: Computer Vision model classifies ripeness (`unripe`, `half_ripe`, `ripe`, `overripe`) and maps probabilities onto the 1–7 operational scale.
 * **DAF Biological-Age Context**: Calculates Days After Flowering (DAF) as contextual agronomic evidence alongside visual inspection.
-* **Multi-Modal Route & ETA Calculation**: Computes real-world road transit distances and vehicle-specific durations (e.g., light truck) via geocoding and routing APIs.
+* **Vehicle-Aware Route & ETA Calculation**: Computes real-world road transit distances and vehicle-specific durations (e.g., light truck) via geocoding and routing APIs.
 * **Harvest & Shipping Schedule Optimizer**: Generates recommended harvest, shipping, and arrival dates alongside projected arrival maturity.
-* **Native Field Inspection Camera**: Browser-native camera capture with live preview, retake options, and gallery upload support.
+* **Browser Camera & Gallery Input**: Browser-native camera capture with live preview, retake options, and gallery upload support.
 
 ---
 
@@ -32,16 +31,15 @@ PisGO transforms subjective, disconnected banana harvesting decisions into a dat
 ```mermaid
 graph TD
     User([User / Field Inspector]) -->|Uploads photo & dates| WebApp[Next.js 16 Web Application]
-    WebApp -->|Geocoding & Autocomplete| TomTom[TomTom / Foursquare APIs]
+    WebApp -->|Location Search & Geocoding| TomTom[TomTom / Foursquare APIs]
     WebApp -->|Logistics Routing & ETA| Geoapify[Geoapify Routing API]
-    WebApp -->|POST /v1/predict with image| AIService[FastAPI AI Service :8001]
+    WebApp -->|Prediction Request: Image + Dates + Target| AIService[FastAPI AI Service :8001]
 
     subgraph "AI Inference Pipeline"
         AIService -->|Image bytes| YOLO[YOLOv11n Presence Gate]
         YOLO -->|banana_detected = false| Reject[Fail-Closed Rejection]
         YOLO -->|banana_detected = true| Classifier[Cavendish CV Classifier]
         Classifier -->|4-Class Probabilities| MaturityBlend[Current Maturity 1-7 Scale]
-        MaturityBlend --> DaysToTarget[Days-to-Target Baseline]
     end
 
     subgraph "Agronomic Evidence"
@@ -50,6 +48,8 @@ graph TD
     end
 
     subgraph "Logistics & Schedule Optimization"
+        MaturityBlend --> DaysToTarget[Days-to-Target Baseline]
+        WebApp -.->|Target Maturity| DaysToTarget
         MaturityBlend --> Optimizer[PisGO Schedule Optimizer]
         DaysToTarget --> Optimizer
         Geoapify -->|Travel Duration| Optimizer
@@ -58,7 +58,7 @@ graph TD
     end
 ```
 
-> **Scientific Transparency Note on DAF**: The current MVP calculates DAF as biological-age context/evidence. It is not yet fused directly into the scheduling heuristic; longitudinal calibration is required before using DAF as a quantitative maturity-rate modifier. Separately, the schedule optimizer computes delivery timing using current visual maturity, days-to-target, target maturity, travel duration, and photo date.
+> **Scientific Transparency Note on DAF**: The current MVP calculates DAF as biological-age context/evidence. It is not yet fused into the scheduling heuristic; longitudinal calibration is required before using DAF as a quantitative maturity-rate modifier. Separately, the schedule optimizer computes delivery timing using current visual maturity, days-to-target, target maturity, travel duration, and photo date.
 
 ---
 
@@ -96,7 +96,7 @@ Copy-Item .env.example .env
 ```
 
 Configure API keys in `.env` (Docker Compose automatically wires internal `AI_API_BASE_URL=http://ai-api:8001`):
-* **`GEOAPIFY_API_KEY`**: Required for logistics routing, distance, and duration/ETA.
+* **`GEOAPIFY_API_KEY`**: Required for logistics road routing, distance, and duration/ETA.
 * **`TOMTOM_API_KEY`**: Required for location autocomplete search and geocoding.
 * **`FOURSQUARE_API_KEY`**: Optional fallback for categorized POI search.
 
@@ -107,7 +107,7 @@ docker compose up --build -d
 
 ### 5. Verify & Access
 * **Web Application**: [http://localhost:3000](http://localhost:3000)
-* **AI Service Health**: [http://localhost:8001/health](http://localhost:8001/health) (Expected: `{"status":"ok","model_loaded":true}`)
+* **AI Service Health**: [http://localhost:8001/health](http://localhost:8001/health) (Verify that `status` is `ok` and `model_loaded` is `true`)
 
 ### 6. Stop Containers
 ```bash
@@ -188,8 +188,7 @@ pisgo/
 
 ---
 
-## 📄 License & Attribution
+## 📄 Third-Party Attribution
 
-* Built for **COMPFEST 18 AI Innovation Challenge**.
 * Computer Vision YOLO detector utilizes Ultralytics YOLOv11 (AGPL-3.0).
 * Maps & Tiles courtesy of Geoapify, OpenStreetMap, TomTom, and Foursquare.

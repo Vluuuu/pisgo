@@ -48,6 +48,9 @@ Thumbs.db
 # Local Claude Code runtime artifacts
 .claude/
 .playwright-mcp/
+/apps/web/AGENTS.md
+/apps/web/CLAUDE.md
+/apps/web/DESIGN.md
 # Local UI audit / screenshot artifacts
 /pisgo-*.png
 /pisgo-*.md
