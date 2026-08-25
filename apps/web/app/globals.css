@@ -2462,6 +2462,15 @@ input[type="date"].field {
   color: var(--ink);
   font-variant-numeric: tabular-nums;
 }
+.evidence-disclaimer {
+  margin: .65rem 0 0;
+  padding-top: .65rem;
+  border-top: 1px dashed var(--line);
+  color: var(--muted-light);
+  font-size: .72rem;
+  line-height: 1.4;
+  font-style: italic;
+}
 
 .recommendation-meta {
   padding: 1rem 1.75rem;

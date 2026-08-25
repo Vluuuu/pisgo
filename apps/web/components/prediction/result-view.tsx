@@ -153,13 +153,16 @@ export function ResultView({ prediction, schedule, route, origin, destination, t
           <Evidence label="Hari setelah berbunga" value={`${prediction.days_after_flowering} hari`} />
           <Evidence label="Kematangan saat ini" value={`Tingkat ${formatMaturity(current)} / 7`} />
           <Evidence label="Target kematangan" value={`Tingkat ${formatMaturity(targetMaturity)} / 7`} />
-          <Evidence label="Skor model (belum dikalibrasi)" value={`${Math.round(prediction.confidence * 100)}%`} />
+          <Evidence label="Keyakinan prediksi visual" value={`${Math.round(prediction.confidence * 100)}%`} />
         </dl>
+        <p className="evidence-disclaimer">
+          Confidence internal model, bukan probabilitas kepastian kondisi lapangan.
+        </p>
       </section>
 
       <footer className="recommendation-meta">
         <p>
-          <FlaskIcon aria-hidden="true" size={16} weight="regular" /> Model {prediction.model_version} ({prediction.adapter_version}) · Prototipe pengembangan
+          <FlaskIcon aria-hidden="true" size={16} weight="regular" /> PisGO AI · Deteksi tandan & estimasi kematangan visual
         </p>
       </footer>
     </section>

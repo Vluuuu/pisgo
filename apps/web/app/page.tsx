@@ -39,9 +39,9 @@ export default function Home() {
             className="footer-mark"
             aria-hidden="true"
           />
-          <p>PisGo · Sistem Keputusan Panen & Logistik Pisang Cavendish</p>
+          <p>PisGO · Sistem Keputusan Panen & Logistik Pisang Cavendish</p>
         </div>
-        <p className="footer-note">Prototipe pengembangan: prediksi kematangan masih menggunakan model dasar pengembangan.</p>
+        <p className="footer-note">MVP PisGO · Analisis visual AI untuk perencanaan panen dan pengiriman Cavendish.</p>
       </footer>
     </main>
   );
