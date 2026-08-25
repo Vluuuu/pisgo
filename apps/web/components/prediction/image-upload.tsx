@@ -238,7 +238,7 @@ export function ImageUpload({ value, onChange, onPhotoDateChange, error }: Image
   // Handle tap on photo container box
   function handleStageClick(event: React.MouseEvent) {
     const target = event.target as HTMLElement;
-    if (target.closest(".action-btn.remove")) {
+    if (target.closest(".action-btn.remove") || target.closest('input[type="file"]')) {
       return;
     }
     event.preventDefault();
@@ -314,7 +314,11 @@ export function ImageUpload({ value, onChange, onPhotoDateChange, error }: Image
           type="file"
           accept="image/jpeg,image/png,image/webp"
           aria-labelledby={`${inputId}-label`}
-          onClick={(event) => { event.currentTarget.value = ""; setValidationError(null); }}
+          onClick={(event) => {
+            event.stopPropagation();
+            event.currentTarget.value = "";
+            setValidationError(null);
+          }}
           onChange={(event) => handleFile(event.target.files?.[0] ?? null)}
         />
       </div>
