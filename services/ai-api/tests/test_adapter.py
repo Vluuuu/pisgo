@@ -11,6 +11,7 @@ import app.adapter as adapter
 from app.adapter import (
     BananaPredictor,
     compute_days_after_flowering,
+    estimate_banana_age_progress,
     estimate_days_to_target,
     weighted_maturity,
 )
@@ -59,6 +60,42 @@ class TestDaysToTarget:
 
     def test_past_target_returns_none(self):
         assert estimate_days_to_target(6.8, 5.5, 0.15) is None
+
+
+class TestBananaAgeProgressBaseline:
+    def test_case_1_same_day(self):
+        res = estimate_banana_age_progress(date(2026, 6, 1), date(2026, 6, 1), 120)
+        assert res["daf"] == 0
+        assert res["expected_harvest_daf"] == 120
+        assert res["age_progress"] == 0.0
+        assert res["age_stage"] == "early_development"
+        assert res["method"] == "daf-baseline-v1"
+
+    def test_case_2_sixty_days(self):
+        res = estimate_banana_age_progress(date(2026, 6, 1), date(2026, 7, 31), 120)
+        assert res["daf"] == 60
+        assert res["age_progress"] == pytest.approx(0.5, abs=1e-3)
+        assert res["age_stage"] == "late_development"
+
+    def test_case_3_exact_harvest_window(self):
+        res = estimate_banana_age_progress(date(2026, 6, 1), date(2026, 9, 29), 120)
+        assert res["daf"] == 120
+        assert res["age_progress"] == 1.0
+        assert res["age_stage"] == "harvest_window_or_later"
+
+    def test_case_4_over_harvest_window_preserves_real_daf_and_clamps_progress(self):
+        res = estimate_banana_age_progress(date(2026, 6, 1), date(2026, 10, 29), 120)
+        assert res["daf"] == 150
+        assert res["age_progress"] == 1.0
+        assert res["age_stage"] == "harvest_window_or_later"
+
+    def test_case_5_photo_before_flowering_raises_value_error(self):
+        with pytest.raises(ValueError, match="must not be earlier"):
+            estimate_banana_age_progress(date(2026, 8, 20), date(2026, 8, 1), 120)
+
+    def test_non_positive_expected_days_raises_value_error(self):
+        with pytest.raises(ValueError, match="must be positive"):
+            estimate_banana_age_progress(date(2026, 6, 1), date(2026, 8, 1), 0)
 
 
 class TestBananaPredictorGate:

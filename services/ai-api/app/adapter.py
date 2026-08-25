@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import io
 from datetime import date
+from typing import Any
 
 from pisgo_ml.cv_predict import predict_image_source
 
@@ -31,6 +32,43 @@ from .schemas import PredictionDebug, PredictionResponse
 def compute_days_after_flowering(flowering_date: date, photo_date: date) -> int:
     """Whole days between flowering and photo; negative deltas clamp to 0."""
     return max(0, (photo_date - flowering_date).days)
+
+
+def classify_age_stage(age_progress: float) -> str:
+    """Deterministic heuristic progress bins for biological development."""
+    if age_progress < 0.25:
+        return "early_development"
+    if age_progress < 0.50:
+        return "developing"
+    if age_progress < 0.75:
+        return "late_development"
+    if age_progress < 1.00:
+        return "approaching_harvest"
+    return "harvest_window_or_later"
+
+
+def estimate_banana_age_progress(
+    flowering_date: date,
+    photo_date: date,
+    expected_harvest_days: int = 120,
+) -> dict[str, Any]:
+    """Calculate deterministic DAF biological age progress and categorical stage."""
+    if expected_harvest_days <= 0:
+        raise ValueError("expected_harvest_days must be positive.")
+    if photo_date < flowering_date:
+        raise ValueError("photo_date must not be earlier than flowering_date.")
+
+    daf = (photo_date - flowering_date).days
+    raw_progress = daf / expected_harvest_days
+    age_progress = round(min(max(raw_progress, 0.0), 1.0), 4)
+
+    return {
+        "daf": daf,
+        "expected_harvest_daf": expected_harvest_days,
+        "age_progress": age_progress,
+        "age_stage": classify_age_stage(age_progress),
+        "method": "daf-baseline-v1",
+    }
 
 
 def weighted_maturity(
