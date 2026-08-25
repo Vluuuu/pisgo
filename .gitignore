@@ -46,8 +46,7 @@ tmp/
 Thumbs.db
 
 # Local Claude Code runtime artifacts
-.claude/settings.local.json
-.claude/worktrees/
+.claude/
 .playwright-mcp/
 # Local UI audit / screenshot artifacts
 /pisgo-*.png

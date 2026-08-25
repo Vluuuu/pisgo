@@ -12,16 +12,17 @@ from pisgo_ml.cv_predict import CVArtifactError, load_cv_artifact
 
 from .adapter import BananaPredictor
 from .config import load_settings
+from .detector import BananaBunchDetector, DetectorError, DetectorImageError
 from .schemas import ErrorResponse, HealthResponse, PredictionResponse
 
 app = FastAPI(
     title="PisGo AI API",
     version="1.0.0",
     description=(
-        "Adapter service between the PisGo web app and the Cavendish maturity "
-        "classifier. Banana detection is a heuristic proxy; confidence is an "
-        "uncalibrated score; the class->1-7 maturity mapping is a PisGo design "
-        "decision, not an agronomic calibration."
+        "Adapter service between the PisGo web app and ML models. Banana "
+        "detection is performed by a YOLO class-0 detector; maturity is "
+        "predicted by the 4-class Cavendish CV model on detection; the class->1-7 "
+        "maturity mapping is a PisGo design decision, not an agronomic calibration."
     ),
 )
 
@@ -30,8 +31,14 @@ _predictor: BananaPredictor | None = None
 _load_error: str | None = None
 
 try:
-    _predictor = BananaPredictor(load_cv_artifact(_settings.model_path), _settings)
-except (FileNotFoundError, CVArtifactError) as exc:  # pragma: no cover
+    _maturity_artifact = load_cv_artifact(_settings.model_path)
+    _detector = BananaBunchDetector(
+        _settings.detector_path,
+        model_version=_settings.detector_model_version,
+        confidence_threshold=_settings.detector_confidence_threshold,
+    )
+    _predictor = BananaPredictor(_maturity_artifact, _detector, _settings)
+except (FileNotFoundError, CVArtifactError, DetectorError) as exc:  # pragma: no cover
     _load_error = str(exc)
 
 
@@ -112,10 +119,17 @@ async def predict(
             photo_date=photo_date,
             target_maturity=target_maturity,
         )
-    except CVFeatureError as exc:
+    except (CVFeatureError, DetectorImageError) as exc:
         return JSONResponse(
             status_code=400,
             content=ErrorResponse(error=f"Unreadable image: {exc}").model_dump(),
+        )
+    except DetectorError as exc:
+        return JSONResponse(
+            status_code=500,
+            content=ErrorResponse(
+                error=f"Detector inference failed: {exc}"
+            ).model_dump(),
         )
 
 

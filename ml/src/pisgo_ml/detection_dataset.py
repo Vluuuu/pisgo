@@ -6,6 +6,7 @@ import argparse
 import csv
 import hashlib
 import html
+import io
 import json
 import math
 import mimetypes
@@ -20,7 +21,7 @@ import zipfile
 from collections import Counter
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Iterable
 
 import numpy as np
@@ -32,6 +33,9 @@ from .utils import ensure_parent, write_json
 
 BLOCKED = "YOLO_DATASET_BLOCKED"
 READY = "DATASET_READY_FOR_REVIEW"
+EMERGENCY_READY = "EMERGENCY_YOLO_DATASET_READY"
+EMERGENCY_DATASET_NAME = "competition-emergency-baseline-v1"
+EMERGENCY_INVALID_POSITIVE_IDS = {"commons-164382152"}
 CANDIDATE_FIELDS = [
     "image_id",
     "source_provider",
@@ -2434,6 +2438,429 @@ def package_handoff(config_path: str | Path) -> dict[str, Any]:
     )
 
 
+REMOTE_MAX_DIMENSION = 2048
+REMOTE_JPEG_QUALITY = 88
+REMOTE_MANIFEST_FIELDS = [
+    "image_id",
+    "task_id",
+    "candidate_role",
+    "group_id",
+    "remote_image_file",
+    "remote_sha256",
+    "remote_bytes",
+    "remote_width",
+    "remote_height",
+    "remote_orientation",
+    "canonical_path",
+    "canonical_sha256",
+    "canonical_bytes",
+    "canonical_width",
+    "canonical_height",
+    "canonical_orientation",
+    "resized",
+]
+
+
+def _exact_resize_dimensions(width: int, height: int, maximum: int) -> tuple[int, int]:
+    """Return the largest no-upscale integer size with the exact source ratio."""
+    if width <= 0 or height <= 0 or maximum <= 0:
+        raise DetectionDatasetError("Remote review dimensions must be positive")
+    divisor = math.gcd(width, height)
+    unit_width, unit_height = width // divisor, height // divisor
+    scale = min(divisor, maximum // max(unit_width, unit_height))
+    if scale <= 0:
+        return width, height
+    return unit_width * scale, unit_height * scale
+
+
+def _normalized_box_pixels(
+    box: tuple[float, float, float, float], width: int, height: int
+) -> tuple[float, float, float, float]:
+    x, y, box_width, box_height = box
+    return x * width, y * height, box_width * width, box_height * height
+
+
+def _remote_review_copy(source: Path, destination: Path, maximum: int) -> dict[str, Any]:
+    with Image.open(source) as image:
+        image.load()
+        width, height = image.size
+        orientation = int(image.getexif().get(274, 1))
+        remote_width, remote_height = _exact_resize_dimensions(width, height, maximum)
+        if (remote_width, remote_height) != (width, height):
+            image = image.resize((remote_width, remote_height), Image.Resampling.LANCZOS)
+        if image.mode in {"RGBA", "LA"} or (image.mode == "P" and "transparency" in image.info):
+            rgba = image.convert("RGBA")
+            background = Image.new("RGBA", rgba.size, "white")
+            background.alpha_composite(rgba)
+            image = background.convert("RGB")
+        else:
+            image = image.convert("RGB")
+        exif = Image.Exif()
+        if orientation != 1:
+            exif[274] = orientation
+        ensure_parent(destination)
+        image.save(
+            destination,
+            "JPEG",
+            quality=REMOTE_JPEG_QUALITY,
+            optimize=True,
+            progressive=True,
+            exif=exif,
+        )
+    return {
+        "remote_sha256": _sha256_file(destination),
+        "remote_bytes": destination.stat().st_size,
+        "remote_width": remote_width,
+        "remote_height": remote_height,
+        "remote_orientation": orientation,
+        "resized": str((remote_width, remote_height) != (width, height)).lower(),
+    }
+
+
+def _write_zip(source: Path, destination: Path, *, include_root: bool = False) -> None:
+    ensure_parent(destination)
+    root = source.parent if include_root else source
+    with zipfile.ZipFile(
+        destination, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9
+    ) as archive:
+        for path in sorted(item for item in source.rglob("*") if item.is_file()):
+            archive.write(path, path.relative_to(root).as_posix())
+
+
+def _validate_remote_archive(
+    archive_path: Path, expected_rows: list[dict[str, Any]]
+) -> dict[str, Any]:
+    expected_ids = {str(row["image_id"]) for row in expected_rows}
+    expected_by_id = {str(row["image_id"]): row for row in expected_rows}
+    expected_task_ids = {str(row["task_id"]) for row in expected_rows}
+    seen_ids: set[str] = set()
+    errors: list[str] = []
+    with zipfile.ZipFile(archive_path) as outer:
+        files = [item.filename for item in outer.infolist() if not item.is_dir()]
+        names = set(files)
+        if len(files) != len(names):
+            errors.append("Remote outer archive contains duplicate member names")
+        root = "annotation_handoff_remote/"
+        required = {
+            root + "README.md",
+            root + "review.csv",
+            root + "human_qa.csv",
+            root + "labelmap.txt",
+            root + "remote_manifest.csv",
+            root + "validation.json",
+            *(root + f"tasks/{task_id}.csv" for task_id in expected_task_ids),
+            *(root + f"tasks/{task_id}.zip" for task_id in expected_task_ids),
+        }
+        if missing := sorted(required - names):
+            errors.append(f"Remote archive is missing: {', '.join(missing)}")
+        if extra := sorted(names - required):
+            errors.append(f"Remote archive has unexpected members: {', '.join(extra)}")
+        if any(name.startswith(root + "images/") for name in names):
+            errors.append("Remote archive duplicates images outside task ZIPs")
+        task_archives = sorted(
+            name
+            for name in names
+            if name.startswith(root + "tasks/task-") and name.endswith(".zip")
+        )
+        task_csvs = sorted(
+            name
+            for name in names
+            if name.startswith(root + "tasks/task-") and name.endswith(".csv")
+        )
+        if len(task_archives) != len(task_csvs):
+            errors.append("Remote task ZIP/CSV counts differ")
+        for task_name in task_archives:
+            task_id = Path(task_name).stem
+            with outer.open(task_name) as member, zipfile.ZipFile(io.BytesIO(member.read())) as task:
+                image_members = [item for item in task.infolist() if not item.is_dir()]
+                if len(image_members) != len({item.filename for item in image_members}):
+                    errors.append(f"Duplicate member names in {task_id}.zip")
+                for item in image_members:
+                    image_id = Path(item.filename).stem
+                    if image_id in seen_ids:
+                        errors.append(f"Duplicate remote image ID: {image_id}")
+                        continue
+                    seen_ids.add(image_id)
+                    row = expected_by_id.get(image_id)
+                    if not row:
+                        errors.append(f"Unexpected remote image ID: {image_id}")
+                        continue
+                    if item.filename != row["remote_image_file"]:
+                        errors.append(f"Remote filename changed: {image_id}")
+                    if task_id != row["task_id"]:
+                        errors.append(f"Remote task membership changed: {image_id}")
+                    payload = task.read(item)
+                    if hashlib.sha256(payload).hexdigest() != row["remote_sha256"]:
+                        errors.append(f"Remote review-copy checksum mismatch: {image_id}")
+                    try:
+                        with Image.open(io.BytesIO(payload)) as image:
+                            image.load()
+                            width, height = image.size
+                            orientation = int(image.getexif().get(274, 1))
+                    except OSError as error:
+                        errors.append(f"Unreadable remote review copy {image_id}: {error}")
+                        continue
+                    if (width, height) != (
+                        int(row["remote_width"]),
+                        int(row["remote_height"]),
+                    ):
+                        errors.append(f"Remote dimensions changed: {image_id}")
+                    if width * int(row["canonical_height"]) != height * int(
+                        row["canonical_width"]
+                    ):
+                        errors.append(f"Remote aspect ratio changed: {image_id}")
+                    if orientation != int(row["canonical_orientation"]):
+                        errors.append(f"Remote EXIF orientation changed: {image_id}")
+    if seen_ids != expected_ids:
+        errors.append(
+            f"Remote ID coverage mismatch: expected {len(expected_ids)}, found {len(seen_ids)}"
+        )
+    sample_box = (0.5, 0.5, 0.25, 0.25)
+    normalized_geometry_equivalent = all(
+        tuple(
+            value / dimension
+            for value, dimension in zip(
+                _normalized_box_pixels(
+                    sample_box, int(row["remote_width"]), int(row["remote_height"])
+                ),
+                (
+                    int(row["remote_width"]),
+                    int(row["remote_height"]),
+                    int(row["remote_width"]),
+                    int(row["remote_height"]),
+                ),
+            )
+        )
+        == sample_box
+        for row in expected_rows
+    )
+    if not normalized_geometry_equivalent:
+        errors.append("Normalized YOLO geometry is not equivalent")
+    return {
+        "valid": not errors,
+        "errors": errors,
+        "candidate_count": len(seen_ids),
+        "task_count": len(task_archives),
+        "all_ids_preserved": seen_ids == expected_ids,
+        "no_duplicate_images": len(seen_ids) == len(expected_ids),
+        "aspect_ratios_preserved": not any(
+            "aspect ratio" in error for error in errors
+        ),
+        "orientations_preserved": not any("orientation" in error for error in errors),
+        "normalized_geometry_equivalent": normalized_geometry_equivalent,
+        "archive_member_count": len(names),
+    }
+
+
+def package_remote_handoff(config_path: str | Path) -> dict[str, Any]:
+    """Build one small remote-only handoff without touching canonical data."""
+    config = load_detection_config(config_path)
+    manifest_path: Path = config["paths"]["candidate_manifest"]
+    candidates = _read_csv(manifest_path)
+    _require_fields(manifest_path, candidates, CANDIDATE_FIELDS)
+    if blockers := _require_approved_curation(config_path):
+        raise DetectionDatasetError("Remote handoff requires approved curation: " + "; ".join(blockers))
+    rows = [row for row in candidates if row.get("curator_decision", "").lower() == "include"]
+    if not rows:
+        raise DetectionDatasetError("No included candidates are available for remote handoff")
+
+    original_handoff: Path = config["paths"]["handoff_dir"]
+    original_archive = original_handoff.with_suffix(".zip")
+    destination = original_handoff.with_name("annotation_handoff_remote.zip")
+    temporary_root = original_handoff.with_name("annotation_handoff_remote.tmp")
+    temporary_archive = destination.with_suffix(".zip.tmp")
+    if destination.exists() or temporary_root.exists() or temporary_archive.exists():
+        raise DetectionDatasetError(f"Remote handoff already exists; refusing to overwrite: {destination}")
+
+    source_hashes: dict[str, str] = {}
+    task_size = int(config["data"]["task_size"])
+    groups: dict[str, list[dict[str, str]]] = {}
+    for row in rows:
+        if not row["group_id"]:
+            raise DetectionDatasetError(f"Included candidate has no group_id: {row['image_id']}")
+        groups.setdefault(row["group_id"], []).append(row)
+    tasks: list[list[dict[str, str]]] = []
+    current: list[dict[str, str]] = []
+    for group_rows in groups.values():
+        if len(group_rows) > task_size:
+            raise DetectionDatasetError(
+                f"Group {group_rows[0]['group_id']} exceeds task_size={task_size}"
+            )
+        if current and len(current) + len(group_rows) > task_size:
+            tasks.append(current)
+            current = []
+        current.extend(group_rows)
+    if current:
+        tasks.append(current)
+
+    try:
+        root = temporary_root / "annotation_handoff_remote"
+        tasks_dir = root / "tasks"
+        copies_dir = temporary_root / "review_copies"
+        tasks_dir.mkdir(parents=True)
+        copies_dir.mkdir()
+        manifest_rows: list[dict[str, Any]] = []
+        review_rows: list[dict[str, Any]] = []
+        for task_number, task_rows in enumerate(tasks, 1):
+            task_id = f"task-{task_number:04d}"
+            task_staging = temporary_root / task_id
+            task_staging.mkdir()
+            task_csv_rows = []
+            for row in task_rows:
+                image_id = row["image_id"]
+                source = config["_project_root"] / row["local_path"]
+                if not source.is_file():
+                    raise DetectionDatasetError(f"Canonical source image is missing: {image_id}")
+                source_hash = _sha256_file(source)
+                if source_hash != row["sha256"]:
+                    raise DetectionDatasetError(f"Canonical source checksum changed: {image_id}")
+                source_hashes[image_id] = source_hash
+                with Image.open(source) as image:
+                    image.verify()
+                with Image.open(source) as image:
+                    canonical_width, canonical_height = image.size
+                    canonical_orientation = int(image.getexif().get(274, 1))
+                remote_name = f"{image_id}.jpg"
+                remote_path = copies_dir / remote_name
+                remote = _remote_review_copy(source, remote_path, REMOTE_MAX_DIMENSION)
+                shutil.move(remote_path, task_staging / remote_name)
+                manifest_rows.append(
+                    {
+                        "image_id": image_id,
+                        "task_id": task_id,
+                        "candidate_role": row["candidate_role"],
+                        "group_id": row["group_id"],
+                        "remote_image_file": remote_name,
+                        **remote,
+                        "canonical_path": row["local_path"],
+                        "canonical_sha256": source_hash,
+                        "canonical_bytes": source.stat().st_size,
+                        "canonical_width": canonical_width,
+                        "canonical_height": canonical_height,
+                        "canonical_orientation": canonical_orientation,
+                    }
+                )
+                task_csv_rows.append(
+                    {
+                        "image_id": image_id,
+                        "image_file": remote_name,
+                        "candidate_role": row["candidate_role"],
+                        "group_id": row["group_id"],
+                    }
+                )
+                review_rows.append(
+                    {
+                        "image_id": image_id,
+                        "image_file": remote_name,
+                        "final_status": "",
+                        "task_id": "",
+                        "reviewer": "",
+                        "reviewed_at": "",
+                        "group_id": row["group_id"],
+                    }
+                )
+            _write_csv(
+                tasks_dir / f"{task_id}.csv",
+                task_csv_rows,
+                ["image_id", "image_file", "candidate_role", "group_id"],
+            )
+            _write_zip(task_staging, tasks_dir / f"{task_id}.zip")
+            shutil.rmtree(task_staging)
+
+        _write_csv(root / "remote_manifest.csv", manifest_rows, REMOTE_MANIFEST_FIELDS)
+        _write_csv(
+            root / "review.csv",
+            review_rows,
+            [
+                "image_id",
+                "image_file",
+                "final_status",
+                "task_id",
+                "reviewer",
+                "reviewed_at",
+                "group_id",
+            ],
+        )
+        _write_csv(
+            root / "human_qa.csv",
+            (
+                {"category": category, "image_id": "", "reviewer": "", "reviewed_at": "", "notes": ""}
+                for category in config["data"]["required_qa_categories"]
+            ),
+            ["category", "image_id", "reviewer", "reviewed_at", "notes"],
+        )
+        (root / "labelmap.txt").write_text("0 banana_bunch\n", encoding="utf-8")
+        (root / "README.md").write_text(
+            "# Remote banana-bunch annotation handoff\n\n"
+            "The task ZIPs contain proportional review-only JPEG copies. Candidate ID stems are unchanged.\n"
+            "Annotate class `0 banana_bunch` using native normalized YOLO rows: "
+            "`class_id x_center y_center width height`. Do not crop, rotate, rename, pseudo-label, or infer full-image boxes.\n"
+            "Return one label file per image, including an explicitly empty UTF-8 file for every reviewed negative, plus completed `review.csv` and `human_qa.csv`.\n"
+            "`remote_manifest.csv` is an identity receipt only; canonical provenance is reloaded from the repository manifest and cannot be changed by the return.\n",
+            encoding="utf-8",
+        )
+        provisional = {
+            "valid": True,
+            "candidate_count": len(manifest_rows),
+            "task_count": len(tasks),
+            "all_ids_preserved": True,
+            "no_duplicate_images": True,
+            "normalized_geometry_equivalent": True,
+            "canonical_hashes_unchanged": False,
+        }
+        write_json(provisional, root / "validation.json")
+        _write_zip(root, temporary_archive, include_root=True)
+        validation = _validate_remote_archive(temporary_archive, manifest_rows)
+        unchanged = all(
+            _sha256_file(config["_project_root"] / row["local_path"])
+            == source_hashes[row["image_id"]]
+            for row in rows
+        )
+        validation["canonical_hashes_unchanged"] = unchanged
+        if not unchanged:
+            validation["errors"].append("Canonical source hashes changed during packaging")
+            validation["valid"] = False
+        write_json(validation, root / "validation.json")
+        temporary_archive.unlink()
+        _write_zip(root, temporary_archive, include_root=True)
+        final_validation = _validate_remote_archive(temporary_archive, manifest_rows)
+        final_validation["canonical_hashes_unchanged"] = unchanged
+        if validation["candidate_count"] != len(manifest_rows):
+            final_validation["errors"].append("Remote validation candidate count changed")
+            final_validation["valid"] = False
+        if not final_validation["valid"] or not unchanged:
+            raise DetectionDatasetError(
+                "Remote handoff validation failed: "
+                + "; ".join(final_validation["errors"] or ["canonical hashes changed"])
+            )
+        temporary_archive.replace(destination)
+        return {
+            "status": "REMOTE_ANNOTATION_HANDOFF_READY",
+            "path": str(destination),
+            "candidate_count": len(manifest_rows),
+            "task_count": len(tasks),
+            "original_zip_bytes": original_archive.stat().st_size if original_archive.is_file() else None,
+            "remote_zip_bytes": destination.stat().st_size,
+            "validation": final_validation,
+        }
+    except Exception:
+        temporary_archive.unlink(missing_ok=True)
+        raise
+    finally:
+        shutil.rmtree(temporary_root, ignore_errors=True)
+
+
+def validate_annotation_label(
+    status: str, text: str
+) -> list[tuple[float, float, float, float]]:
+    boxes = parse_yolo_label(text)
+    if status == "positive" and not boxes:
+        raise DetectionDatasetError("Positive image has no boxes")
+    if status == "negative" and boxes:
+        raise DetectionDatasetError("Negative image has boxes")
+    return boxes
+
+
 def parse_yolo_label(text: str) -> list[tuple[float, float, float, float]]:
     boxes: list[tuple[float, float, float, float]] = []
     for number, line in enumerate(text.splitlines(), 1):
@@ -2523,6 +2950,564 @@ def assign_detection_splits(
     return assignments
 
 
+def _tree_fingerprint(root: Path) -> str:
+    digest = hashlib.sha256()
+    for path in sorted(item for item in root.rglob("*") if item.is_file()):
+        digest.update(path.relative_to(root).as_posix().encode("utf-8"))
+        digest.update(_sha256_file(path).encode("ascii"))
+    return digest.hexdigest()
+
+
+def _load_returned_labels(
+    archive_paths: Iterable[str | Path], expected_ids: set[str]
+) -> tuple[dict[str, dict[str, Any]], list[dict[str, Any]], dict[str, bool]]:
+    labels: dict[str, dict[str, Any]] = {}
+    archives: list[dict[str, Any]] = []
+    receipts = {"review_csv_present": False, "human_qa_csv_present": False}
+    resolved = [Path(path).expanduser().resolve() for path in archive_paths]
+    if not resolved or len(resolved) != len(set(resolved)):
+        raise DetectionDatasetError("Returned annotation ZIP paths must be unique")
+    for archive_path in resolved:
+        if not archive_path.is_file():
+            raise DetectionDatasetError(f"Returned annotation ZIP not found: {archive_path}")
+        ignored: list[str] = []
+        try:
+            with zipfile.ZipFile(archive_path) as archive:
+                files = [item for item in archive.infolist() if not item.is_dir()]
+                names = [item.filename for item in files]
+                if len(names) != len(set(names)):
+                    raise DetectionDatasetError(
+                        f"Returned archive contains duplicate member names: {archive_path}"
+                    )
+                for item in files:
+                    raw_name = item.filename
+                    path = PurePosixPath(raw_name)
+                    if (
+                        "\\" in raw_name
+                        or path.is_absolute()
+                        or ".." in path.parts
+                        or not path.name
+                        or any(":" in part for part in path.parts)
+                    ):
+                        raise DetectionDatasetError(
+                            f"Unsafe returned archive member: {raw_name}"
+                        )
+                    lower_name = path.name.casefold()
+                    if lower_name == "review.csv":
+                        receipts["review_csv_present"] = True
+                    if lower_name == "human_qa.csv":
+                        receipts["human_qa_csv_present"] = True
+                    if path.suffix.casefold() != ".txt" or lower_name == "classes.txt":
+                        ignored.append(raw_name)
+                        continue
+                    image_id = path.stem
+                    if image_id not in expected_ids:
+                        raise DetectionDatasetError(
+                            f"Unknown returned annotation candidate: {image_id}"
+                        )
+                    if image_id in labels:
+                        raise DetectionDatasetError(
+                            f"Duplicate returned annotation candidate: {image_id}"
+                        )
+                    if item.file_size > 1024 * 1024:
+                        raise DetectionDatasetError(
+                            f"Returned label exceeds 1 MiB: {image_id}"
+                        )
+                    payload = archive.read(item)
+                    try:
+                        text = payload.decode("utf-8-sig")
+                    except UnicodeDecodeError as error:
+                        raise DetectionDatasetError(
+                            f"Returned label is not UTF-8: {image_id}"
+                        ) from error
+                    labels[image_id] = {
+                        "archive": str(archive_path),
+                        "member": raw_name,
+                        "payload": payload,
+                        "text": text,
+                        "sha256": hashlib.sha256(payload).hexdigest(),
+                    }
+        except zipfile.BadZipFile as error:
+            raise DetectionDatasetError(
+                f"Malformed returned annotation ZIP: {archive_path}"
+            ) from error
+        archives.append(
+            {
+                "path": str(archive_path),
+                "bytes": archive_path.stat().st_size,
+                "sha256": _sha256_file(archive_path),
+                "ignored_members": ignored,
+            }
+        )
+    return labels, archives, receipts
+
+
+def _validate_emergency_dataset(
+    root: Path,
+    rows: list[dict[str, Any]],
+    expected_fingerprint: str | None = None,
+) -> dict[str, dict[str, int]]:
+    manifest_path = root / "manifest.csv"
+    data_yaml = root / "data.yaml"
+    manifest = _read_csv(manifest_path)
+    if not manifest or not data_yaml.is_file():
+        raise DetectionDatasetError("Emergency dataset manifest.csv or data.yaml is missing")
+    expected_ids = {str(row["image_id"]) for row in rows}
+    actual_ids = [row.get("image_id", "") for row in manifest]
+    if len(actual_ids) != len(set(actual_ids)) or set(actual_ids) != expected_ids:
+        raise DetectionDatasetError("Emergency dataset manifest ID coverage changed")
+    expected_files = {"manifest.csv", "data.yaml"}
+    group_splits: dict[str, set[str]] = {}
+    split_counts: dict[str, dict[str, int]] = {}
+    by_id = {str(row["image_id"]): row for row in rows}
+    for row in manifest:
+        image_id = row["image_id"]
+        expected = by_id[image_id]
+        split = row.get("split", "")
+        status = row.get("final_status", "")
+        if split not in {"train", "val", "test"} or status not in {
+            "positive",
+            "negative",
+        }:
+            raise DetectionDatasetError(f"Invalid emergency manifest row: {image_id}")
+        if split != expected["split"] or status != expected["final_status"]:
+            raise DetectionDatasetError(f"Emergency manifest evidence changed: {image_id}")
+        group_splits.setdefault(row["group_id"], set()).add(split)
+        image_name = row["image_file"]
+        image_path = root / "images" / split / image_name
+        label_path = root / "labels" / split / f"{Path(image_name).stem}.txt"
+        if not image_path.is_file() or not label_path.is_file():
+            raise DetectionDatasetError(f"Emergency dataset file is missing: {image_id}")
+        if _sha256_file(image_path) != row["sha256"]:
+            raise DetectionDatasetError(f"Emergency source checksum changed: {image_id}")
+        try:
+            boxes = parse_yolo_label(label_path.read_text(encoding="utf-8-sig"))
+        except (OSError, UnicodeError, DetectionDatasetError) as error:
+            raise DetectionDatasetError(
+                f"Invalid emergency label {image_id}: {error}"
+            ) from error
+        if bool(boxes) != (status == "positive"):
+            raise DetectionDatasetError(
+                f"Emergency label/status mismatch: {image_id}"
+            )
+        expected_files.update(
+            {
+                f"images/{split}/{image_name}",
+                f"labels/{split}/{Path(image_name).stem}.txt",
+            }
+        )
+        counts = split_counts.setdefault(
+            split, {"images": 0, "positive": 0, "negative": 0, "groups": 0}
+        )
+        counts["images"] += 1
+        counts[status] += 1
+    if any(len(splits) != 1 for splits in group_splits.values()):
+        raise DetectionDatasetError("Emergency dataset has group leakage")
+    for split in ("train", "val", "test"):
+        counts = split_counts.setdefault(
+            split, {"images": 0, "positive": 0, "negative": 0, "groups": 0}
+        )
+        counts["groups"] = len(
+            {row["group_id"] for row in manifest if row["split"] == split}
+        )
+        if not counts["images"] or not counts["positive"]:
+            raise DetectionDatasetError(
+                f"Emergency split {split} requires images and positives"
+            )
+    if not split_counts["test"]["negative"]:
+        raise DetectionDatasetError("Emergency test split requires verified negatives")
+    actual_files = {
+        path.relative_to(root).as_posix()
+        for path in root.rglob("*")
+        if path.is_file()
+    }
+    if actual_files != expected_files:
+        raise DetectionDatasetError("Emergency dataset inventory does not match manifest")
+    if expected_fingerprint is not None and _tree_fingerprint(root) != expected_fingerprint:
+        raise DetectionDatasetError("Emergency dataset fingerprint changed")
+    return split_counts
+
+
+def build_emergency_dataset(
+    config_path: str | Path,
+    archive_paths: Iterable[str | Path],
+    *,
+    expected_positive_count: int = 241,
+    expected_negative_count: int = 81,
+    expected_missing_positive_count: int = 32,
+    expected_invalid_positive_ids: set[str] | None = None,
+) -> dict[str, Any]:
+    """Build the isolated competition subset from approved identities and valid labels."""
+    config = load_detection_config(config_path)
+    if blockers := _require_approved_curation(config_path):
+        raise DetectionDatasetError(
+            "Emergency dataset requires approved curation: " + "; ".join(blockers)
+        )
+    manifest_path: Path = config["paths"]["candidate_manifest"]
+    candidates = _read_csv(manifest_path)
+    _require_fields(manifest_path, candidates, CANDIDATE_FIELDS)
+    candidate_by_id = {row["image_id"]: row for row in candidates}
+    if len(candidate_by_id) != len(candidates):
+        raise DetectionDatasetError("Candidate manifest contains duplicate image_id rows")
+    curation_path, approval_path = _curation_paths(manifest_path)
+    curation = _load_curation(manifest_path, candidates)
+    curation_by_id = {row["image_id"]: row for row in curation}
+    included = [
+        row
+        for row in candidates
+        if _final_curation_decision(curation_by_id[row["image_id"]]) == "include"
+    ]
+    if any(row.get("curator_decision", "").casefold() != "include" for row in included):
+        raise DetectionDatasetError("Approved curation and candidate manifest disagree")
+    positives = [row for row in included if row["candidate_role"] == "positive_candidate"]
+    negatives = [
+        row for row in included if row["candidate_role"] == "hard_negative_candidate"
+    ]
+    invalid_expected = (
+        set(EMERGENCY_INVALID_POSITIVE_IDS)
+        if expected_invalid_positive_ids is None
+        else set(expected_invalid_positive_ids)
+    )
+    if len(negatives) != expected_negative_count or len(positives) != (
+        expected_positive_count + expected_missing_positive_count + len(invalid_expected)
+    ):
+        raise DetectionDatasetError(
+            "Approved candidate counts do not match the emergency contract: "
+            f"positive={len(positives)}, negative={len(negatives)}"
+        )
+    expected_ids = {row["image_id"] for row in included}
+    labels, archive_evidence, receipts = _load_returned_labels(
+        archive_paths, expected_ids
+    )
+
+    selected: list[dict[str, Any]] = []
+    positive_evidence: list[dict[str, Any]] = []
+    negative_evidence: list[dict[str, Any]] = []
+    exclusions: list[dict[str, str]] = []
+    missing_positive_ids: set[str] = set()
+    invalid_positive_ids: set[str] = set()
+    for candidate in positives:
+        image_id = candidate["image_id"]
+        label = labels.get(image_id)
+        if label is None:
+            missing_positive_ids.add(image_id)
+            exclusions.append(
+                {"image_id": image_id, "reason": "missing_returned_positive_label"}
+            )
+            continue
+        try:
+            boxes = parse_yolo_label(label["text"])
+            if not boxes:
+                raise DetectionDatasetError("Positive image has no boxes")
+        except DetectionDatasetError as error:
+            if image_id not in invalid_expected:
+                raise DetectionDatasetError(
+                    f"Unexpected invalid returned positive label {image_id}: {error}"
+                ) from error
+            invalid_positive_ids.add(image_id)
+            exclusions.append(
+                {
+                    "image_id": image_id,
+                    "reason": "invalid_returned_positive_label",
+                    "detail": str(error),
+                }
+            )
+            continue
+        if image_id in invalid_expected:
+            raise DetectionDatasetError(
+                f"Expected invalid positive label is now valid; contract changed: {image_id}"
+            )
+        selected.append(
+            {
+                **candidate,
+                "final_status": "positive",
+                "label_payload": label["payload"],
+                "box_count": len(boxes),
+                "annotation_source": "returned_human_yolo",
+                "annotation_archive": label["archive"],
+                "annotation_member": label["member"],
+                "annotation_sha256": label["sha256"],
+            }
+        )
+        positive_evidence.append(
+            {
+                "image_id": image_id,
+                "archive": label["archive"],
+                "member": label["member"],
+                "label_sha256": label["sha256"],
+                "box_count": len(boxes),
+            }
+        )
+    if (
+        len(selected) != expected_positive_count
+        or len(missing_positive_ids) != expected_missing_positive_count
+        or invalid_positive_ids != invalid_expected
+    ):
+        raise DetectionDatasetError(
+            "Returned positive evidence does not match the emergency contract: "
+            f"valid={len(selected)}, missing={len(missing_positive_ids)}, "
+            f"invalid={len(invalid_positive_ids)}"
+        )
+
+    for candidate in negatives:
+        image_id = candidate["image_id"]
+        returned = labels.get(image_id)
+        state = "absent"
+        submitted_sha256 = ""
+        source_archive = ""
+        source_member = ""
+        if returned is not None:
+            submitted_sha256 = returned["sha256"]
+            source_archive = returned["archive"]
+            source_member = returned["member"]
+            state = "empty" if not returned["text"].strip() else "nonempty_ignored"
+        selected.append(
+            {
+                **candidate,
+                "final_status": "negative",
+                "label_payload": b"",
+                "box_count": 0,
+                "annotation_source": "canonical_human_verified_negative",
+                "annotation_archive": source_archive,
+                "annotation_member": source_member,
+                "annotation_sha256": submitted_sha256,
+            }
+        )
+        negative_evidence.append(
+            {
+                "image_id": image_id,
+                "canonical_role": candidate["candidate_role"],
+                "canonical_decision": "include",
+                "returned_label_state": state,
+                "returned_archive": source_archive,
+                "returned_member": source_member,
+                "returned_label_sha256": submitted_sha256,
+                "materialized_label": "explicit_empty",
+            }
+        )
+
+    required_provenance = (
+        "source_provider",
+        "source_item_id",
+        "source_page_url",
+        "original_url",
+        "author",
+        "license",
+        "license_url",
+        "sha256",
+        "perceptual_hash",
+        "specimen_id",
+        "group_id",
+    )
+    exact_groups: dict[str, set[str]] = {}
+    specimen_groups: dict[str, set[str]] = {}
+    source_groups: dict[str, set[str]] = {}
+    perceptual: list[tuple[int, str, str]] = []
+    for row in selected:
+        image_id = row["image_id"]
+        if not all(str(row.get(key, "")).strip() for key in required_provenance):
+            raise DetectionDatasetError(f"Incomplete emergency provenance: {image_id}")
+        if (
+            row.get("provenance_status") != "verified"
+            or row.get("is_augmented", "").casefold() != "false"
+            or not accepted_license(
+                row["license"], config["source"]["accepted_license_prefixes"]
+            )
+        ):
+            raise DetectionDatasetError(f"Unapproved emergency source: {image_id}")
+        source = config["_project_root"] / row["local_path"]
+        if not source.is_file():
+            raise DetectionDatasetError(f"Canonical source image is missing: {image_id}")
+        try:
+            perceptual_hash, width, height = _perceptual_hash(source)
+            metadata_matches = (
+                _sha256_file(source) == row["sha256"]
+                and source.stat().st_size == int(row["bytes"])
+                and width == int(row["width"])
+                and height == int(row["height"])
+                and perceptual_hash == row["perceptual_hash"]
+            )
+        except (OSError, ValueError) as error:
+            raise DetectionDatasetError(
+                f"Unreadable canonical source image {image_id}: {error}"
+            ) from error
+        if not metadata_matches:
+            raise DetectionDatasetError(f"Canonical source metadata changed: {image_id}")
+        row["source_path"] = source
+        exact_groups.setdefault(row["sha256"], set()).add(row["group_id"])
+        specimen_groups.setdefault(row["specimen_id"], set()).add(row["group_id"])
+        source_groups.setdefault(row["source_page_url"], set()).add(row["group_id"])
+        try:
+            perceptual.append((int(perceptual_hash, 16), row["group_id"], image_id))
+        except ValueError as error:
+            raise DetectionDatasetError(f"Invalid perceptual hash: {image_id}") from error
+    if any(len(groups) > 1 for groups in exact_groups.values()):
+        raise DetectionDatasetError("Exact duplicate emergency images have conflicting groups")
+    if any(len(groups) > 1 for groups in specimen_groups.values()):
+        raise DetectionDatasetError("Emergency specimen IDs have conflicting groups")
+    if any(len(groups) > 1 for groups in source_groups.values()):
+        raise DetectionDatasetError("Emergency source pages have conflicting groups")
+    distance = int(config["data"]["near_duplicate_hamming_distance"])
+    for index, (left_hash, left_group, left_id) in enumerate(perceptual):
+        for right_hash, right_group, right_id in perceptual[index + 1 :]:
+            if left_group != right_group and (
+                left_hash ^ right_hash
+            ).bit_count() <= distance:
+                raise DetectionDatasetError(
+                    "Near-duplicate emergency images have conflicting groups: "
+                    f"{left_id}, {right_id}"
+                )
+
+    assignments = assign_detection_splits(
+        selected,
+        (
+            float(config["data"]["train_ratio"]),
+            float(config["data"]["validation_ratio"]),
+            float(config["data"]["test_ratio"]),
+        ),
+        int(config["project"]["random_seed"]),
+    )
+    for row in selected:
+        row["split"] = assignments[row["group_id"]]
+        row["image_file"] = f"{row['image_id']}{row['source_path'].suffix.lower()}"
+
+    destination = (
+        config["_project_root"]
+        / "datasets/processed/banana_bunch_detection"
+        / EMERGENCY_DATASET_NAME
+    )
+    temporary = destination.with_name(destination.name + ".tmp")
+    if destination.exists() or temporary.exists():
+        raise DetectionDatasetError(
+            f"Emergency dataset already exists; refusing to overwrite: {destination}"
+        )
+    limitations = [
+        "33 canonical positive images were excluded: 32 missing returned labels and one invalid out-of-bounds label.",
+        "Structured annotation review.csv was not returned.",
+        "Structured human_qa.csv was not returned.",
+        "Only mechanically validated returned human boxes and previously human-verified negatives are used.",
+        "This is a competition emergency baseline, not a final annotation release.",
+        "The canonical 355-image handoff remains incomplete.",
+        "No missing review or QA receipt was fabricated.",
+        "No field-validation or production-readiness claim is made.",
+    ]
+    try:
+        dataset = temporary / "dataset"
+        for split in ("train", "val", "test"):
+            (dataset / "images" / split).mkdir(parents=True)
+            (dataset / "labels" / split).mkdir(parents=True)
+        manifest_rows: list[dict[str, Any]] = []
+        for row in sorted(selected, key=lambda item: item["image_id"]):
+            image_destination = dataset / "images" / row["split"] / row["image_file"]
+            label_destination = (
+                dataset
+                / "labels"
+                / row["split"]
+                / f"{Path(row['image_file']).stem}.txt"
+            )
+            # A training library may rewrite malformed-looking JPEGs during scan;
+            # copies keep that behavior isolated from provenance-bound sources.
+            shutil.copy2(row["source_path"], image_destination)
+            label_destination.write_bytes(row["label_payload"])
+            manifest_rows.append(
+                {
+                    **{field: row.get(field, "") for field in CANDIDATE_FIELDS},
+                    "image_file": row["image_file"],
+                    "final_status": row["final_status"],
+                    "split": row["split"],
+                    "annotation_source": row["annotation_source"],
+                    "annotation_archive": row["annotation_archive"],
+                    "annotation_member": row["annotation_member"],
+                    "annotation_sha256": row["annotation_sha256"],
+                    "box_count": row["box_count"],
+                }
+            )
+        _write_csv(
+            dataset / "manifest.csv",
+            manifest_rows,
+            CANDIDATE_FIELDS
+            + [
+                "image_file",
+                "final_status",
+                "split",
+                "annotation_source",
+                "annotation_archive",
+                "annotation_member",
+                "annotation_sha256",
+                "box_count",
+            ],
+        )
+        (dataset / "data.yaml").write_text(
+            "path: .\ntrain: images/train\nval: images/val\ntest: images/test\n"
+            f"names:\n  0: {config['data']['class_name']}\n",
+            encoding="utf-8",
+        )
+        split_counts = _validate_emergency_dataset(dataset, manifest_rows)
+        fingerprint = _tree_fingerprint(dataset)
+        evidence = {
+            "dataset_name": EMERGENCY_DATASET_NAME,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "annotation_archives": archive_evidence,
+            "canonical_state": {
+                "manifest_sha256": _sha256_file(manifest_path),
+                "curation_sha256": _sha256_file(curation_path),
+                "approval_sha256": _sha256_file(approval_path),
+                "approval": _json_file(approval_path, "curation approval"),
+            },
+            "structured_receipts": {
+                **receipts,
+                "used": False,
+                "fabricated": False,
+            },
+            "positive_annotations": positive_evidence,
+            "verified_negative_derivations": negative_evidence,
+        }
+        write_json(evidence, temporary / "evidence.json")
+        write_json(
+            {
+                "excluded_positive_count": len(exclusions),
+                "excluded_positives": sorted(exclusions, key=lambda row: row["image_id"]),
+            },
+            temporary / "exclusions.json",
+        )
+        write_json({"limitations": limitations}, temporary / "limitations.json")
+        audit = {
+            "status": EMERGENCY_READY,
+            "stage": "emergency_annotation_audit",
+            "blockers": [],
+            "dataset_name": EMERGENCY_DATASET_NAME,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "counts": {
+                "included_images": len(manifest_rows),
+                "positive_images": expected_positive_count,
+                "negative_images": expected_negative_count,
+                "excluded_positive_images": len(exclusions),
+                "missing_positive_labels": len(missing_positive_ids),
+                "invalid_positive_labels": len(invalid_positive_ids),
+                "boxes": sum(int(row["box_count"]) for row in manifest_rows),
+                "splits": split_counts,
+                "dataset_sha256": fingerprint,
+            },
+            "paths": {
+                "dataset": str(destination / "dataset"),
+                "manifest": str(destination / "dataset/manifest.csv"),
+                "data_yaml": str(destination / "dataset/data.yaml"),
+                "evidence": str(destination / "evidence.json"),
+                "exclusions": str(destination / "exclusions.json"),
+                "limitations": str(destination / "limitations.json"),
+            },
+            "limitations": limitations,
+            "field_validation_claimed": False,
+            "production_readiness_claimed": False,
+        }
+        write_json(audit, temporary / "audit.json")
+        temporary.replace(destination)
+    except Exception:
+        shutil.rmtree(temporary, ignore_errors=True)
+        raise
+    return audit
+
+
 def _completed_qa_categories(path: Path, statuses: dict[str, str]) -> set[str]:
     rows = _read_csv(path)
     required = {"category", "image_id", "reviewer", "reviewed_at"}
@@ -2607,6 +3592,10 @@ def audit_annotations(
                 continue
             if not row["group_id"]:
                 blockers.append(f"Missing group_id: {image_id}")
+                continue
+            candidate = candidate_by_id[image_id]
+            if row["group_id"] != candidate["group_id"]:
+                blockers.append(f"Review group_id changed from manifest: {image_id}")
                 continue
             expected_stem = image_id
             if Path(row["image_file"]).stem != expected_stem:
@@ -2796,6 +3785,13 @@ def audit_annotations(
     split_counts = Counter(
         assignments.get(row["group_id"], "unassigned") for row in valid_rows
     )
+    dataset_fingerprint = ""
+    if not blockers and destination.is_dir():
+        digest = hashlib.sha256()
+        for path in sorted(item for item in destination.rglob("*") if item.is_file()):
+            digest.update(path.relative_to(destination).as_posix().encode("utf-8"))
+            digest.update(_sha256_file(path).encode("ascii"))
+        dataset_fingerprint = digest.hexdigest()
     counts = {
         "candidates": len(candidates),
         "review_rows": len(reviews),
@@ -2813,6 +3809,7 @@ def audit_annotations(
         "human_qa_complete": not any("Human QA coverage" in blocker for blocker in blockers),
         "dataset_path": str(destination),
         "data_yaml_path": str(destination / "data.yaml"),
+        "dataset_sha256": dataset_fingerprint,
         **{f"split_{key}": value for key, value in sorted(split_counts.items())},
     }
     return _write_report(config, "annotation_audit", counts, blockers)
@@ -2834,6 +3831,8 @@ def main() -> None:
             "curate",
             "curation-status",
             "package",
+            "package-remote",
+            "build-emergency",
             "build",
             "audit",
         ),
@@ -2846,7 +3845,14 @@ def main() -> None:
     parser.add_argument("--source-audit-id")
     parser.add_argument("--sample-size", type=int, default=40)
     parser.add_argument("--receipt")
+    parser.add_argument("--annotation-zip", action="append", default=[])
     args = parser.parse_args()
+    if args.command == "build-emergency":
+        if len(args.annotation_zip) != 2:
+            parser.error("build-emergency requires exactly two --annotation-zip paths")
+        result = build_emergency_dataset(args.config, args.annotation_zip)
+        print(json.dumps(result, indent=2))
+        return
     if args.command == "export-negative-audit":
         if not args.audit_id:
             parser.error("export-negative-audit requires --audit-id")
@@ -2899,6 +3905,9 @@ def main() -> None:
         return
     if args.command == "curate":
         serve_curation(args.config, args.port)
+        return
+    if args.command == "package-remote":
+        print(json.dumps(package_remote_handoff(args.config), indent=2))
         return
     if args.command == "curation-status":
         summary = curation_summary(args.config)

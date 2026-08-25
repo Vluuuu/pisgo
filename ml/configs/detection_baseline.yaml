@@ -1,0 +1,42 @@
+project:
+  name: banana-bunch-yolo-baseline
+  model_version: banana-bunch-yolo11n-v1
+  random_seed: 42
+
+paths:
+  dataset_audit: datasets/processed/banana_bunch_detection/audit.json
+  data_yaml: datasets/processed/banana_bunch_detection/dataset/data.yaml
+  dataset_manifest: datasets/processed/banana_bunch_detection/dataset/manifest.csv
+  run_dir: runs/detection/banana-bunch-yolo11n-v1
+  checkpoint: models/banana_bunch_yolo11n_v1.pt
+  metrics_output: reports/detection_metrics.json
+  manual_inspection: reports/detection_manual_inspection.csv
+
+model:
+  pretrained_weights: yolo11n.pt
+  image_size: 640
+  batch_size: 8
+  epochs: 100
+  patience: 15
+  device: cpu
+  workers: 0
+
+# Fixed before held-out test evaluation; do not tune on test labels.
+evaluation:
+  confidence_threshold: 0.25
+  nms_iou_threshold: 0.70
+  matching_iou_threshold: 0.50
+  latency_warmup_images: 3
+
+# Official GitHub repository/release metadata checked before use.
+# AGPL obligations apply to this competition baseline and any distributed service.
+provenance:
+  package_url: https://github.com/ultralytics/ultralytics
+  package_version: 8.4.127
+  package_license: AGPL-3.0
+  package_license_url: https://github.com/ultralytics/ultralytics/blob/main/LICENSE
+  weights_url: https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo11n.pt
+  weights_release: v8.4.0
+  weights_license: AGPL-3.0
+  weights_repository: https://github.com/ultralytics/assets
+  checked_at: 2026-08-24
