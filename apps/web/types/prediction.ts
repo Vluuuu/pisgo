@@ -19,12 +19,15 @@ export type PredictionRequest = {
 };
 
 export type PredictionDebugInfo = {
-  predicted_class: MaturityClass;
-  class_probabilities: MaturityClassValues;
-  maturity_class_scale: MaturityClassValues;
-  foreground_proxy_ratio: number;
-  banana_detection_threshold: number;
-  detection_method: "foreground-color-heuristic-proxy";
+  predicted_class: MaturityClass | null;
+  class_probabilities: MaturityClassValues | null;
+  maturity_class_scale: MaturityClassValues | null;
+  detector_model_version: string;
+  detection_score: number | null;
+  detection_count: number;
+  detection_threshold: number;
+  detection_method: "yolo11n-class-0";
+  detector_inference_milliseconds: number | null;
   inference_milliseconds: number | null;
 };
 

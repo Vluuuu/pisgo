@@ -46,22 +46,31 @@ function isValidPredictionDebug(obj: unknown): obj is PredictionDebugInfo {
   if (!obj || typeof obj !== "object") return false;
   const d = obj as Record<string, unknown>;
 
-  if (typeof d.predicted_class !== "string" || !VALID_MATURITY_CLASSES.includes(d.predicted_class as MaturityClass)) {
+  if (d.predicted_class !== null && (typeof d.predicted_class !== "string" || !VALID_MATURITY_CLASSES.includes(d.predicted_class as MaturityClass))) {
     return false;
   }
-  if (!isValidMaturityClassValues(d.class_probabilities, 0, 1)) {
+  if (d.class_probabilities !== null && !isValidMaturityClassValues(d.class_probabilities, 0, 1)) {
     return false;
   }
-  if (!isValidMaturityClassValues(d.maturity_class_scale, 0)) {
+  if (d.maturity_class_scale !== null && !isValidMaturityClassValues(d.maturity_class_scale, 0)) {
     return false;
   }
-  if (!isFiniteNumberBetween(d.foreground_proxy_ratio, 0, 1)) {
+  if (typeof d.detector_model_version !== "string" || d.detector_model_version.trim() === "") {
     return false;
   }
-  if (!isFiniteNumberBetween(d.banana_detection_threshold, 0, 1)) {
+  if (d.detection_score !== null && !isFiniteNumberBetween(d.detection_score, 0, 1)) {
     return false;
   }
-  if (d.detection_method !== "foreground-color-heuristic-proxy") {
+  if (typeof d.detection_count !== "number" || !Number.isInteger(d.detection_count) || d.detection_count < 0) {
+    return false;
+  }
+  if (!isFiniteNumberBetween(d.detection_threshold, 0, 1)) {
+    return false;
+  }
+  if (d.detection_method !== "yolo11n-class-0") {
+    return false;
+  }
+  if (d.detector_inference_milliseconds !== null && !(typeof d.detector_inference_milliseconds === "number" && Number.isFinite(d.detector_inference_milliseconds) && d.detector_inference_milliseconds >= 0)) {
     return false;
   }
   if (d.inference_milliseconds !== null && !(typeof d.inference_milliseconds === "number" && Number.isFinite(d.inference_milliseconds) && d.inference_milliseconds >= 0)) {
