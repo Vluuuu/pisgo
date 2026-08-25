@@ -6,13 +6,13 @@
 [![Model Artifacts](https://img.shields.io/badge/Release-aic--preliminary--models--v1-blue)](https://github.com/Vluuuu/pisgo/releases/tag/aic-preliminary-models-v1)
 [![COMPFEST 18](https://img.shields.io/badge/COMPFEST%2018-AI%20Innovation%20Challenge-orange)](#)
 
-PisGO is an intelligent decision-support system designed to solve post-harvest quality mismatch in Cavendish banana distribution. By combining computer vision presence gating, visual ripeness classification, contextual biological-age tracking, and route-aware logistics modeling, PisGO helps growers and distributors schedule exact harvest and dispatch dates so bananas arrive at destination markets at the desired maturity level (scale 1–7).
+PisGO is an intelligent decision-support platform designed to help Cavendish banana growers and distribution networks plan harvest and dispatch timing based on a desired maturity level at destination. By combining computer vision presence gating, visual ripeness classification, contextual biological-age tracking, and route-aware transit modeling, PisGO delivers projected harvest-to-arrival schedule recommendations.
 
 ---
 
 ## What is PisGO?
 
-PisGO transforms subjective, disconnected banana harvesting decisions into a data-driven planning workflow. Rather than guessing harvest timing or ignoring transit ripening, users provide a bunch photo, flowering date, target maturity, and route parameters. PisGO inspects the photo, estimates visual ripeness, tracks biological age progress, and calculates transit duration to deliver an actionable harvest, shipping, and arrival schedule.
+PisGO transforms subjective, disconnected banana harvesting decisions into a data-driven planning workflow. Rather than guessing harvest timing or ignoring transit ripening, users provide a bunch photo, flowering date, target maturity, and route parameters. PisGO inspects the photo, estimates visual ripeness, tracks biological age progress, and calculates transit duration to deliver an actionable harvest, shipping, and arrival planning estimate.
 
 ---
 
@@ -20,7 +20,7 @@ PisGO transforms subjective, disconnected banana harvesting decisions into a dat
 
 * **YOLO Banana Bunch Presence Gate**: Frozen YOLOv11n object detector verifies bunch presence before running maturity inference.
 * **4-Class Visual Maturity Classifier**: Computer Vision model classifies ripeness (`unripe`, `half_ripe`, `ripe`, `overripe`) and maps probabilities onto the 1–7 operational scale.
-* **DAF Biological-Age Context**: Calculates Days After Flowering (DAF) and categorizes developmental stages as contextual agronomic evidence.
+* **DAF Biological-Age Context**: Calculates Days After Flowering (DAF) as contextual agronomic evidence alongside visual inspection.
 * **Multi-Modal Route & ETA Calculation**: Computes real-world road transit distances and vehicle-specific durations (e.g., light truck) via geocoding and routing APIs.
 * **Harvest & Shipping Schedule Optimizer**: Generates recommended harvest, shipping, and arrival dates alongside projected arrival maturity.
 * **Native Field Inspection Camera**: Browser-native camera capture with live preview, retake options, and gallery upload support.
@@ -40,22 +40,25 @@ graph TD
         AIService -->|Image bytes| YOLO[YOLOv11n Presence Gate]
         YOLO -->|banana_detected = false| Reject[Fail-Closed Rejection]
         YOLO -->|banana_detected = true| Classifier[Cavendish CV Classifier]
-        Classifier -->|4-Class Probabilities| MaturityBlend[Mapped Maturity 1-7 Scale]
+        Classifier -->|4-Class Probabilities| MaturityBlend[Current Maturity 1-7 Scale]
+        MaturityBlend --> DaysToTarget[Days-to-Target Baseline]
     end
 
     subgraph "Agronomic Evidence"
         WebApp -->|Flowering & Photo Dates| DAFCalc[DAF Biological Age Context]
-        DAFCalc --> DAFDisplay[Displayed Biological Stage Evidence]
+        DAFCalc --> DAFDisplay[Displayed DAF Value Context]
     end
 
-    subgraph "Logistics Optimization"
-        MaturityBlend -->|Current Maturity| Optimizer[PisGO Schedule Optimizer]
-        Geoapify -->|Transit Duration| Optimizer
-        Optimizer --> Output[Harvest, Dispatch & Arrival Plan]
+    subgraph "Logistics & Schedule Optimization"
+        MaturityBlend --> Optimizer[PisGO Schedule Optimizer]
+        DaysToTarget --> Optimizer
+        Geoapify -->|Travel Duration| Optimizer
+        WebApp -->|Target Maturity & Photo Date| Optimizer
+        Optimizer --> Output[Harvest, Dispatch & Arrival Planning Estimate]
     end
 ```
 
-> **Note on DAF**: DAF is currently presented as contextual biological-age evidence and is not yet fused directly into the scheduling heuristic pending longitudinal field calibration.
+> **Scientific Transparency Note on DAF**: The current MVP calculates DAF as biological-age context/evidence. It is not yet fused directly into the scheduling heuristic; longitudinal calibration is required before using DAF as a quantitative maturity-rate modifier. Separately, the schedule optimizer computes delivery timing using current visual maturity, days-to-target, target maturity, travel duration, and photo date.
 
 ---
 
@@ -91,7 +94,11 @@ cp .env.example .env
 # Windows PowerShell
 Copy-Item .env.example .env
 ```
-*(Optional: Add `GEOAPIFY_API_KEY` to `.env` for live road routing; TomTom and Foursquare keys serve as optional geocoding fallbacks).*
+
+Configure API keys in `.env` (Docker Compose automatically wires internal `AI_API_BASE_URL=http://ai-api:8001`):
+* **`GEOAPIFY_API_KEY`**: Required for logistics routing, distance, and duration/ETA.
+* **`TOMTOM_API_KEY`**: Required for location autocomplete search and geocoding.
+* **`FOURSQUARE_API_KEY`**: Optional fallback for categorized POI search.
 
 ### 4. Build & Run
 ```bash
@@ -100,7 +107,7 @@ docker compose up --build -d
 
 ### 5. Verify & Access
 * **Web Application**: [http://localhost:3000](http://localhost:3000)
-* **AI Service Health**: [http://localhost:8001/health](http://localhost:8001/health)
+* **AI Service Health**: [http://localhost:8001/health](http://localhost:8001/health) (Expected: `{"status":"ok","model_loaded":true}`)
 
 ### 6. Stop Containers
 ```bash
@@ -122,13 +129,14 @@ Detailed ML architecture and training pipelines are documented in [`ml/README.md
 
 | Metric | YOLOv11n Presence Gate |
 |---|---:|
+| **Curated Detector Dataset** | 322 images (241 positive, 81 hard-negative) |
+| **Held-out Test Partition** | 48 images (36 positive, 12 negative) |
 | **Precision** | 75.61% |
 | **Recall** | 72.22% |
 | **mAP@50** | 71.55% |
 | **mAP@50–95** | 35.27% |
-| **Held-out Test Set** | 48 images (36 positive, 12 negative) |
 
-*Evaluation metrics represent an MVP benchmark under controlled splits, not an operational field agronomic claim. See [`ml/README.md`](ml/README.md) for full classifier validation metrics.*
+*The 48-image held-out set is the dedicated ~15% test partition evaluated separately from training data. These metrics represent an MVP detector benchmark under controlled splits, not an operational field agronomic claim. See [`ml/README.md`](ml/README.md) for full details.*
 
 ---
 
