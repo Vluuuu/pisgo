@@ -1,6 +1,6 @@
 # PisGo Web
 
-Next.js MVP for Cavendish harvest, route, and arrival-maturity planning.
+Next.js 16 fullstack application for Cavendish harvest, route, and arrival-maturity planning.
 
 ## Setup
 
@@ -10,11 +10,16 @@ Next.js MVP for Cavendish harvest, route, and arrival-maturity planning.
    cp ../../.env.example .env.local
    ```
 
-2. Set `TOMTOM_API_KEY` (for location suggest, details, and address geocoding), `FOURSQUARE_API_KEY` (for POI search), and `GEOAPIFY_API_KEY` (for routing and map tiles) in `apps/web/.env.local`. Keys stay server-side behind Next.js route handlers.
+2. Configure environment variables in `apps/web/.env.local`:
+   * `GEOAPIFY_API_KEY`: Required for logistics routing and map tiles.
+   * `TOMTOM_API_KEY`: Optional for address search and geocoding.
+   * `FOURSQUARE_API_KEY`: Optional for POI search fallback.
+   * `AI_API_BASE_URL`: Required (points to FastAPI inference service, e.g., `http://127.0.0.1:8001`).
+
 3. Install and run:
 
    ```bash
-   npm install
+   npm ci
    npm run dev
    ```
 
@@ -29,10 +34,9 @@ npm test
 npm run build
 ```
 
-## MVP boundaries
+## MVP Implementation Notes
 
-- TomTom Places Search (Suggest/Discover/Details v3) and Geocoding (v2) handle location autocomplete and geocoding.
-- Geoapify light-truck routing and raster map tiles are live when `GEOAPIFY_API_KEY` is configured.
-- `lib/prediction/mock.ts` follows the shared prediction response contract but does not inspect image pixels.
-- `lib/optimizer/baseline.ts` is a replaceable scheduling heuristic, not a validated maturity forecast.
-- Replace the export in `lib/prediction/index.ts` when the versioned AI service is ready.
+- Location autocomplete and search uses TomTom v3/v2 with Foursquare POI fallback.
+- Logistics routing uses Geoapify vehicle-specific routing (default: `light_truck`) and Leaflet map tiles.
+- `lib/prediction/ai-api.ts` connects directly to the FastAPI inference service (`/v1/predict`) implementing the YOLO presence gate + visual maturity response contract.
+- `lib/optimizer/baseline.ts` provides a baseline schedule optimizer based on visual maturity, target maturity, travel duration, and photo date.

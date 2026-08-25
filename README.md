@@ -3,7 +3,8 @@
 **AI-Powered Harvest and Arrival Maturity Planning for Smart Banana Distribution**
 
 [![Production Demo](https://img.shields.io/badge/Demo-pisgo.my.id-brightgreen)](https://pisgo.my.id)
-[![COMPFEST 18](https://img.shields.io/badge/COMPFEST%2018-AI%20Innovation%20Challenge-blue)](#)
+[![Model Artifacts](https://img.shields.io/badge/Release-aic--preliminary--models--v1-blue)](https://github.com/Vluuuu/pisgo/releases/tag/aic-preliminary-models-v1)
+[![COMPFEST 18](https://img.shields.io/badge/COMPFEST%2018-AI%20Innovation%20Challenge-orange)](#)
 
 PisGO is a decision-support platform designed to help Cavendish banana growers, packhouses, and distribution networks determine optimal harvest and shipping dates so bananas arrive at target markets at the desired maturity level (scale 1–7).
 
@@ -24,7 +25,7 @@ PisGO bridges this gap by combining computer vision presence detection, visual m
 
 * **Banana Bunch Presence Gate**: YOLOv11n object detector verifies the presence of banana bunches before running downstream classification.
 * **4-Class Visual Maturity Estimation**: Computer Vision classifier assesses bunch ripeness (`unripe`, `half_ripe`, `ripe`, `overripe`) and maps class probabilities onto the PisGo 1–7 operational scale.
-* **DAF Biological-Age Baseline**: Calculates Days After Flowering (DAF) from flowering and observation dates, categorizing biological progress into deterministic developmental stages.
+* **DAF Biological-Age Baseline**: Calculates Days After Flowering (DAF) from flowering and observation dates, categorizing biological progress into deterministic developmental stages as contextual agronomic evidence.
 * **Multi-Modal Logistics Routing**: Calculates real-world route distances, road transit durations, and travel geometry using geocoding and vehicle-specific routing APIs (e.g., light trucks).
 * **Harvest & Shipping Schedule Optimizer**: Computes recommended harvest date, recommended dispatch date, expected arrival date, and projected maturity upon arrival.
 * **Native Field Inspection Camera**: Browser-native camera capture with real-time preview, retake, and local image upload support.
@@ -47,14 +48,19 @@ graph TD
         Classifier -->|4-Class Probabilities| MaturityBlend[Probability-Weighted 1-7 Scale]
     end
 
-    subgraph "Agronomic & Logistics Optimization"
-        WebApp -->|Flowering & Photo Dates| DAFCalc[DAF Biological Age Baseline]
+    subgraph "Agronomic Evidence"
+        WebApp -->|Flowering & Photo Dates| DAFCalc[DAF Biological Age Context]
+        DAFCalc --> DAFDisplay[Displayed Biological Stage Evidence]
+    end
+
+    subgraph "Logistics Optimization"
         MaturityBlend -->|Current Maturity| Optimizer[PisGO Schedule Optimizer]
-        DAFCalc -->|Biological Context| Optimizer
         Geoapify -->|Transit Duration| Optimizer
         Optimizer --> Output[Harvest, Dispatch & Arrival Plan]
     end
 ```
+
+> **Scientific Transparency Note on DAF**: The current MVP calculates DAF as biological-age context/evidence. It is not yet fused into the scheduling heuristic; longitudinal calibration is required before using DAF as a quantitative maturity-rate modifier. Separately, the schedule optimizer computes delivery timing using current visual maturity, target maturity, travel duration, and photo date.
 
 ---
 
@@ -71,7 +77,7 @@ graph TD
 * **Mapping to UI Scale (1–7)**:
   $$\text{Current Maturity} = \sum_{c \in \text{classes}} P(c) \times \text{Anchor}(c)$$
   Anchors: `unripe: 2.0`, `half_ripe: 3.5`, `ripe: 5.5`, `overripe: 6.5`.
-* **Artifact**: `ml/models/cavendish_maturity_classifier.joblib`.
+* **Artifact**: `ml/models/cavendish_maturity_classifier.joblib` (SHA-256: `117c1f134670ac9b3ebc1b9d3f8a1d81549ec3fbd23f159b741238325f187c9e`).
 
 ### 3. DAF Biological-Age Baseline
 * **Formula**: $\text{DAF} = \text{photo\_date} - \text{flowering\_date}$ (whole calendar days, clamped $\ge 0$).
@@ -144,13 +150,13 @@ pisgo/
 
 ## 🔑 Environment Variables
 
-Copy `.env.example` to `.env` (or `apps/web/.env.local` for local Next.js):
+Copy `.env.example` to `.env` (or `apps/web/.env.local` for local Next.js development):
 
-| Variable | Scope | Required | Default / Example | Purpose |
+| Variable | Scope | Required | Example Placeholder | Purpose |
 |---|---|:---:|---|---|
-| `GEOAPIFY_API_KEY` | Server (Web) | Yes | `e600cd...` | Logistics routing and map tile fetching |
-| `TOMTOM_API_KEY` | Server (Web) | Optional | `M6FyAN...` | Address search & location autocomplete fallback |
-| `FOURSQUARE_API_KEY` | Server (Web) | Optional | `0CIDIR...` | POI search fallback |
+| `GEOAPIFY_API_KEY` | Server (Web) | Yes | `your_geoapify_api_key_here` | Logistics routing and map tile fetching |
+| `TOMTOM_API_KEY` | Server (Web) | Optional | `your_tomtom_api_key_here` | Address search & location autocomplete fallback |
+| `FOURSQUARE_API_KEY` | Server (Web) | Optional | `your_foursquare_api_key_here` | POI search fallback |
 | `AI_API_BASE_URL` | Server (Web) | Yes | `http://localhost:8001` (Docker: `http://ai-api:8001`) | Target URL for FastAPI inference service |
 | `CV_MODEL_PATH` | Server (AI) | Optional | `ml/models/cavendish_maturity_classifier.joblib` | Path to visual classifier Joblib artifact |
 | `DETECTOR_MODEL_PATH` | Server (AI) | Optional | `ml/models/banana_bunch_yolo11n_emergency_v1.pt` | Path to YOLO detector checkpoint |
@@ -168,17 +174,35 @@ To run AI inference locally or in Docker, the following model weights must be pl
    * Purpose: Frozen YOLOv11n banana bunch presence detector.
    * File Size: `21,234,723 bytes`
    * SHA-256: `d8e3ca2b0305a0755cae707f2969486674d98761d14b2c79a02a43ba7f5ce26e`
+   * Download: [GitHub Release Asset](https://github.com/Vluuuu/pisgo/releases/download/aic-preliminary-models-v1/banana_bunch_yolo11n_emergency_v1.pt)
 2. **`cavendish_maturity_classifier.joblib`**
    * Purpose: 4-class Cavendish visual maturity classifier.
-   * File Size: `~15,409 bytes`
+   * File Size: `15,409 bytes`
+   * SHA-256: `117c1f134670ac9b3ebc1b9d3f8a1d81549ec3fbd23f159b741238325f187c9e`
+   * Download: [GitHub Release Asset](https://github.com/Vluuuu/pisgo/releases/download/aic-preliminary-models-v1/cavendish_maturity_classifier.joblib)
+
+### Quick Artifact Download Command
+
+```bash
+# Using GitHub CLI (recommended)
+gh release download aic-preliminary-models-v1 --dir ml/models
+
+# Or using curl / wget
+curl -L -o ml/models/banana_bunch_yolo11n_emergency_v1.pt \
+  https://github.com/Vluuuu/pisgo/releases/download/aic-preliminary-models-v1/banana_bunch_yolo11n_emergency_v1.pt
+
+curl -L -o ml/models/cavendish_maturity_classifier.joblib \
+  https://github.com/Vluuuu/pisgo/releases/download/aic-preliminary-models-v1/cavendish_maturity_classifier.joblib
+```
 
 ### Verification Command (PowerShell / Bash)
 ```bash
 # PowerShell
 Get-FileHash ml/models/banana_bunch_yolo11n_emergency_v1.pt -Algorithm SHA256
+Get-FileHash ml/models/cavendish_maturity_classifier.joblib -Algorithm SHA256
 
 # Linux / macOS
-sha256sum ml/models/banana_bunch_yolo11n_emergency_v1.pt
+sha256sum ml/models/banana_bunch_yolo11n_emergency_v1.pt ml/models/cavendish_maturity_classifier.joblib
 ```
 
 *If artifacts are missing at startup, the AI API service will fail-closed and return `503 Service Unavailable` with `"model_loaded": false` on `/health`.*
@@ -194,15 +218,18 @@ Ensure Docker Desktop is running, then execute:
 git clone https://github.com/Vluuuu/pisgo.git
 cd pisgo
 
-# 2. Set up environment variables
-cp .env.example .env
-# (Optional) Add your GEOAPIFY_API_KEY to .env for real routing
+# 2. Download model artifacts into ml/models/
+gh release download aic-preliminary-models-v1 --dir ml/models
 
-# 3. Build & start containers
+# 3. Set up environment variables
+cp .env.example .env
+# (Optional) Add your GEOAPIFY_API_KEY to .env for live routing
+
+# 4. Build & start containers
 docker compose build
 docker compose up -d
 
-# 4. Verify running containers
+# 5. Verify running containers
 docker compose ps
 ```
 
@@ -243,7 +270,7 @@ cd apps/web
 npm ci
 
 # Configure environment
-cp .env.example .env.local
+cp ../../.env.example .env.local
 
 # Run Next.js development server
 npm run dev
@@ -280,15 +307,15 @@ pytest services/ai-api/tests
 ## 🌐 Production Deployment
 
 * **Live Demo**: [https://pisgo.my.id](https://pisgo.my.id)
-* **Frontend Infrastructure**: Next.js deployed on Cloudflare Workers edge runtime via OpenNext.
-* **AI Backend**: FastAPI containerized service with GPU/CPU inference support.
+* **Production Web Hosting**: Next.js deployed on Cloudflare Workers edge runtime via OpenNext.
+* **AI Service**: FastAPI model inference service providing prediction endpoints.
 
 ---
 
 ## ⚠️ MVP Limitations & Disclaimers
 
 1. **Uncalibrated Confidence**: Prediction confidence reflects raw classifier softmax outputs, not calibrated field certainty.
-2. **Transit Ripening Model**: Ripening rate is currently a linear planning heuristic ($0.15$ scale units/day) rather than a dynamic thermodynamic chamber simulation.
+2. **Transit Ripening Model**: Ripening rate is currently a temporary MVP planning heuristic ($0.15$ scale units/day) pending longitudinal field calibration rather than a dynamic thermodynamic chamber simulation.
 3. **Controlled CV Baseline**: The visual classifier was trained on studio-controlled specimen imagery and should be calibrated with real field photography for operational deployment.
 4. **Agronomic Variables**: Microclimate (temperature, ethylene exposure, RH) during transit is assumed constant in the baseline optimizer.
 
