@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import csv
+import hashlib
+import io
 import json
 from pathlib import Path
 import zipfile
@@ -17,6 +19,7 @@ from pisgo_ml.detection_dataset import (
     _freeze_second_reviews,
     accepted_license,
     assign_detection_splits,
+    build_emergency_dataset,
     collect_positive_expansion,
     export_negative_audit,
     export_negative_semantics_review,
@@ -315,7 +318,6 @@ def _offline_fixture(tmp_path: Path) -> tuple[Path, list[dict[str, str]]]:
         image_id = f"candidate-{number}"
         image_path = images / f"{image_id}.jpg"
         Image.new("RGB", (20, 10), (number * 50, 150, 50)).save(image_path)
-        import hashlib
         candidates.append({
             "image_id": image_id, "source_provider": "Wikimedia Commons",
             "source_item_id": f"File:{image_id}.jpg", "source_page_url": f"https://example.test/{image_id}",
@@ -346,7 +348,8 @@ def _offline_fixture(tmp_path: Path) -> tuple[Path, list[dict[str, str]]]:
         "  accepted_mime_types: [image/jpeg, image/png, image/webp]\n"
         "  max_file_bytes: 12582912\n"
         "  targets:\n    positive_candidate: 2\n"
-        "data:\n  near_duplicate_hamming_distance: 3\n",
+        "data:\n  task_size: 1\n  near_duplicate_hamming_distance: 3\n"
+        "  required_qa_categories: [positive, negative, partial, occluded, edge_touching, multi_bunch]\n",
         encoding="utf-8",
     )
     return config, candidates
@@ -409,6 +412,462 @@ def _receipt(
         "reviewer": reviewer, "decisions": decisions,
     }), encoding="utf-8")
     return path
+
+
+def _approve_all_fixture_candidates(
+    config: Path, candidates: list[dict[str, str]]
+) -> None:
+    project = config.parent.parent
+    manifest_path = project / "datasets/raw/banana_bunch_detection/candidates.csv"
+    curation_path = manifest_path.with_name("curation.csv")
+    approval_path = manifest_path.with_name("curation_approval.json")
+    rows = []
+    for candidate in candidates:
+        candidate["curator_decision"] = "include"
+        rows.append(
+            {
+                field: (
+                    candidate["image_id"]
+                    if field == "image_id"
+                    else "include"
+                    if field in {"first_decision", "final_decision"}
+                    else "Reviewer One"
+                    if field == "first_reviewer"
+                    else "2026-08-24T10:00:00+00:00"
+                    if field == "first_reviewed_at"
+                    else ""
+                )
+                for field in detection_dataset.CURATION_FIELDS
+            }
+        )
+    detection_dataset._write_csv(
+        manifest_path, candidates, detection_dataset.CANDIDATE_FIELDS
+    )
+    detection_dataset._write_csv(
+        curation_path, rows, detection_dataset.CURATION_FIELDS
+    )
+    approval_path.write_text(
+        json.dumps(
+            {
+                "approved_by": "Approver",
+                "approved_at": "2026-08-24T11:00:00+00:00",
+                "manifest_sha256": detection_dataset._sha256_file(manifest_path),
+                "curation_sha256": detection_dataset._sha256_file(curation_path),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_remote_resize_preserves_exact_ratio_without_upscaling():
+    assert detection_dataset._exact_resize_dimensions(4000, 3000, 2048) == (
+        2048,
+        1536,
+    )
+    assert detection_dataset._exact_resize_dimensions(1200, 800, 2048) == (
+        1200,
+        800,
+    )
+    assert detection_dataset._exact_resize_dimensions(4093, 2048, 2048) == (
+        4093,
+        2048,
+    )
+
+
+def test_remote_review_copy_preserves_orientation_and_normalized_geometry(
+    tmp_path,
+):
+    source = tmp_path / "canonical.png"
+    exif = Image.Exif()
+    exif[274] = 6
+    Image.new("RGB", (4000, 3000), "yellow").save(source, exif=exif)
+    destination = tmp_path / "candidate-0.jpg"
+
+    result = detection_dataset._remote_review_copy(source, destination, 2048)
+
+    with Image.open(destination) as image:
+        assert image.size == (2048, 1536)
+        assert image.getexif().get(274) == 6
+    assert result["remote_orientation"] == 6
+    assert result["resized"] == "true"
+    box = (0.5, 0.4, 0.25, 0.2)
+    canonical = detection_dataset._normalized_box_pixels(box, 4000, 3000)
+    remote = detection_dataset._normalized_box_pixels(box, 2048, 1536)
+    assert tuple(value / size for value, size in zip(canonical, (4000, 3000, 4000, 3000))) == pytest.approx(box)
+    assert tuple(value / size for value, size in zip(remote, (2048, 1536, 2048, 1536))) == pytest.approx(box)
+
+
+def test_annotation_label_gate_requires_boxes_only_for_positives():
+    assert detection_dataset.validate_annotation_label("negative", "") == []
+    with pytest.raises(DetectionDatasetError, match="Negative image has boxes"):
+        detection_dataset.validate_annotation_label(
+            "negative", "0 0.5 0.5 0.4 0.2\n"
+        )
+    with pytest.raises(DetectionDatasetError, match="Positive image has no boxes"):
+        detection_dataset.validate_annotation_label("positive", "")
+
+
+def test_remote_handoff_preserves_ids_geometry_and_canonical_hashes(tmp_path):
+    config, candidates = _offline_fixture(tmp_path)
+    _approve_all_fixture_candidates(config, candidates)
+    source = config.parent.parent / candidates[0]["local_path"]
+    before = {path: path.read_bytes() for path in source.parent.iterdir()}
+
+    result = detection_dataset.package_remote_handoff(config)
+
+    archive_path = Path(result["path"])
+    assert result["candidate_count"] == 2
+    assert result["task_count"] == 2
+    assert result["validation"]["valid"] is True
+    assert result["validation"]["canonical_hashes_unchanged"] is True
+    assert {path: path.read_bytes() for path in source.parent.iterdir()} == before
+    with zipfile.ZipFile(archive_path) as outer:
+        names = set(outer.namelist())
+        assert not any("/images/" in name for name in names)
+        manifest = list(
+            csv.DictReader(
+                io.StringIO(
+                    outer.read(
+                        "annotation_handoff_remote/remote_manifest.csv"
+                    ).decode()
+                )
+            )
+        )
+        assert {row["image_id"] for row in manifest} == {
+            candidate["image_id"] for candidate in candidates
+        }
+        assert all(row["canonical_sha256"] == candidates[index]["sha256"] for index, row in enumerate(manifest))
+        returned_ids = []
+        for task_name in sorted(
+            name for name in names if name.endswith(".zip")
+        ):
+            with zipfile.ZipFile(io.BytesIO(outer.read(task_name))) as task:
+                returned_ids.extend(Path(name).stem for name in task.namelist())
+        assert sorted(returned_ids) == sorted(
+            candidate["image_id"] for candidate in candidates
+        )
+
+
+def test_remote_archive_validation_rejects_missing_and_duplicate_ids(tmp_path):
+    payload = io.BytesIO()
+    Image.new("RGB", (20, 10), "yellow").save(payload, "JPEG")
+    image = payload.getvalue()
+    row = {
+        "image_id": "candidate-0",
+        "task_id": "task-0001",
+        "remote_image_file": "candidate-0.jpg",
+        "remote_sha256": hashlib.sha256(image).hexdigest(),
+        "remote_width": 20,
+        "remote_height": 10,
+        "canonical_width": 20,
+        "canonical_height": 10,
+        "canonical_orientation": 1,
+    }
+    archive = tmp_path / "remote.zip"
+    task_payload = io.BytesIO()
+    with zipfile.ZipFile(task_payload, "w") as task:
+        task.writestr("candidate-0.jpg", image)
+        task.writestr("copy/candidate-0.jpg", image)
+    with zipfile.ZipFile(archive, "w") as outer:
+        root = "annotation_handoff_remote/"
+        for name in (
+            "README.md",
+            "review.csv",
+            "human_qa.csv",
+            "labelmap.txt",
+            "remote_manifest.csv",
+            "validation.json",
+            "tasks/task-0001.csv",
+        ):
+            outer.writestr(root + name, "")
+        outer.writestr(root + "tasks/task-0001.zip", task_payload.getvalue())
+
+    validation = detection_dataset._validate_remote_archive(archive, [row])
+
+    assert validation["valid"] is False
+    assert any("Duplicate remote image ID" in error for error in validation["errors"])
+
+
+def _emergency_fixture(tmp_path: Path) -> tuple[Path, list[dict[str, str]], Path]:
+    config, candidates = _offline_fixture(tmp_path)
+    project = config.parent.parent
+    positive_template, negative_template = candidates
+    for number in range(1, 5):
+        image_id = f"positive-{number}"
+        candidates.append(
+            {
+                **positive_template,
+                "image_id": image_id,
+                "source_item_id": f"File:{image_id}.jpg",
+                "source_page_url": f"https://example.test/{image_id}",
+                "original_url": f"https://example.test/{image_id}.jpg",
+                "local_path": f"datasets/raw/banana_bunch_detection/images/{image_id}.jpg",
+                "specimen_id": image_id,
+                "group_id": image_id,
+            }
+        )
+    for number in range(1, 3):
+        image_id = f"negative-{number}"
+        candidates.append(
+            {
+                **negative_template,
+                "image_id": image_id,
+                "source_item_id": f"File:{image_id}.jpg",
+                "source_page_url": f"https://example.test/{image_id}",
+                "original_url": f"https://example.test/{image_id}.jpg",
+                "local_path": f"datasets/raw/banana_bunch_detection/images/{image_id}.jpg",
+                "specimen_id": image_id,
+                "group_id": image_id,
+            }
+        )
+    for index, candidate in enumerate(candidates, 1):
+        image_path = project / candidate["local_path"]
+        image = Image.new("RGB", (20, 10))
+        image.putdata(
+            [
+                (
+                    (x * index * 17 + y * (index + 2) * 29) % 256,
+                    (x * (index + 3) * 11 + y * index * 19) % 256,
+                    (x * 7 + y * (index + 5) * 13) % 256,
+                )
+                for y in range(10)
+                for x in range(20)
+            ]
+        )
+        image.save(image_path)
+        perceptual_hash, width, height = detection_dataset._perceptual_hash(image_path)
+        candidate.update(
+            {
+                "bytes": str(image_path.stat().st_size),
+                "sha256": hashlib.sha256(image_path.read_bytes()).hexdigest(),
+                "perceptual_hash": perceptual_hash,
+                "width": str(width),
+                "height": str(height),
+            }
+        )
+    text = config.read_text(encoding="utf-8")
+    text = text.replace(
+        "  targets:\n    positive_candidate: 2\n",
+        "  targets:\n    positive_candidate: 5\n",
+    ).replace(
+        "data:\n  task_size: 1\n",
+        "data:\n  class_id: 0\n  class_name: banana_bunch\n"
+        "  train_ratio: 0.5\n  validation_ratio: 0.25\n  test_ratio: 0.25\n"
+        "  task_size: 1\n",
+    )
+    config.write_text(text, encoding="utf-8")
+    _approve_all_fixture_candidates(config, candidates)
+    archive = tmp_path / "returned.zip"
+    with zipfile.ZipFile(archive, "w") as handle:
+        for image_id in ("candidate-0", "positive-1", "positive-2"):
+            handle.writestr(f"labels/{image_id}.txt", "0 0.5 0.5 0.4 0.2\n")
+        handle.writestr("labels/positive-3.txt", "0 0.5 0.95 0.4 0.2\n")
+        handle.writestr("labels/candidate-1.txt", "0 0.5 0.5 0.4 0.2\n")
+        handle.writestr("labels/classes.txt", "banana_bunch\n")
+    return config, candidates, archive
+
+
+def test_emergency_dataset_builds_valid_human_boxes_and_approved_empty_negatives(
+    tmp_path,
+):
+    config, candidates, archive = _emergency_fixture(tmp_path)
+
+    result = build_emergency_dataset(
+        config,
+        [archive],
+        expected_positive_count=3,
+        expected_negative_count=3,
+        expected_missing_positive_count=1,
+        expected_invalid_positive_ids={"positive-3"},
+    )
+
+    assert result["status"] == "EMERGENCY_YOLO_DATASET_READY"
+    assert result["counts"]["included_images"] == 6
+    assert result["counts"]["positive_images"] == 3
+    assert result["counts"]["negative_images"] == 3
+    root = (
+        config.parent.parent
+        / "datasets/processed/banana_bunch_detection/competition-emergency-baseline-v1"
+    )
+    manifest = list(csv.DictReader((root / "dataset/manifest.csv").open(encoding="utf-8")))
+    negative = next(row for row in manifest if row["final_status"] == "negative")
+    assert (root / "dataset/labels" / negative["split"] / "candidate-1.txt").read_text() == ""
+    evidence = json.loads((root / "evidence.json").read_text(encoding="utf-8"))
+    assert evidence["structured_receipts"]["fabricated"] is False
+    assert evidence["verified_negative_derivations"][0]["returned_label_state"] == "nonempty_ignored"
+    exclusions = json.loads((root / "exclusions.json").read_text(encoding="utf-8"))
+    assert {row["reason"] for row in exclusions["excluded_positives"]} == {
+        "missing_returned_positive_label",
+        "invalid_returned_positive_label",
+    }
+    assert result["counts"]["dataset_sha256"] == detection_dataset._tree_fingerprint(
+        root / "dataset"
+    )
+
+
+def test_emergency_dataset_images_are_independent_copies(tmp_path):
+    config, _, archive = _emergency_fixture(tmp_path)
+    build_emergency_dataset(
+        config,
+        [archive],
+        expected_positive_count=3,
+        expected_negative_count=3,
+        expected_missing_positive_count=1,
+        expected_invalid_positive_ids={"positive-3"},
+    )
+    project = config.parent.parent
+    root = project / "datasets/processed/banana_bunch_detection/competition-emergency-baseline-v1/dataset"
+    rows = list(csv.DictReader((root / "manifest.csv").open(encoding="utf-8")))
+    row = rows[0]
+    source = project / row["local_path"]
+    built = root / "images" / row["split"] / row["image_file"]
+    source_bytes = source.read_bytes()
+
+    built.write_bytes(b"simulated JPEG repair")
+
+    assert source.read_bytes() == source_bytes
+
+
+def test_emergency_dataset_rejects_specimen_or_source_group_conflicts(tmp_path):
+    for field, match in (
+        ("specimen_id", "specimen IDs"),
+        ("source_page_url", "source pages"),
+    ):
+        case = tmp_path / field
+        config, candidates, archive = _emergency_fixture(case)
+        candidates[1][field] = candidates[0][field]
+        _approve_all_fixture_candidates(config, candidates)
+
+        with pytest.raises(DetectionDatasetError, match=match):
+            build_emergency_dataset(
+                config,
+                [archive],
+                expected_positive_count=3,
+                expected_negative_count=3,
+                expected_missing_positive_count=1,
+                expected_invalid_positive_ids={"positive-3"},
+            )
+
+
+def test_emergency_dataset_rejects_unknown_or_duplicate_returns(tmp_path):
+    config, _, archive = _emergency_fixture(tmp_path)
+    duplicate = tmp_path / "duplicate.zip"
+    with zipfile.ZipFile(duplicate, "w") as handle:
+        handle.writestr("copy/candidate-0.txt", "0 0.5 0.5 0.4 0.2\n")
+
+    with pytest.raises(DetectionDatasetError, match="Duplicate returned"):
+        build_emergency_dataset(
+            config,
+            [archive, duplicate],
+            expected_positive_count=3,
+            expected_negative_count=3,
+            expected_missing_positive_count=1,
+            expected_invalid_positive_ids={"positive-3"},
+        )
+
+    unknown = tmp_path / "unknown.zip"
+    with zipfile.ZipFile(unknown, "w") as handle:
+        handle.writestr("unknown.txt", "0 0.5 0.5 0.4 0.2\n")
+    with pytest.raises(DetectionDatasetError, match="Unknown returned"):
+        build_emergency_dataset(
+            config,
+            [archive, unknown],
+            expected_positive_count=3,
+            expected_negative_count=3,
+            expected_missing_positive_count=1,
+            expected_invalid_positive_ids={"positive-3"},
+        )
+
+
+def test_emergency_dataset_validation_rejects_fingerprint_mutation(tmp_path):
+    config, _, archive = _emergency_fixture(tmp_path)
+    result = build_emergency_dataset(
+        config,
+        [archive],
+        expected_positive_count=3,
+        expected_negative_count=3,
+        expected_missing_positive_count=1,
+        expected_invalid_positive_ids={"positive-3"},
+    )
+    root = (
+        config.parent.parent
+        / "datasets/processed/banana_bunch_detection/competition-emergency-baseline-v1/dataset"
+    )
+    rows = list(csv.DictReader((root / "manifest.csv").open(encoding="utf-8")))
+    positive = next(row for row in rows if row["final_status"] == "positive")
+    (root / "labels" / positive["split"] / f"{positive['image_id']}.txt").write_text(
+        "0 0.5 0.5 0.2 0.2\n", encoding="utf-8"
+    )
+
+    with pytest.raises(DetectionDatasetError, match="fingerprint changed"):
+        detection_dataset._validate_emergency_dataset(
+            root,
+            rows,
+            result["counts"]["dataset_sha256"],
+        )
+
+
+def test_emergency_dataset_refuses_overwrite(tmp_path):
+    config, _, archive = _emergency_fixture(tmp_path)
+    kwargs = {
+        "expected_positive_count": 3,
+        "expected_negative_count": 3,
+        "expected_missing_positive_count": 1,
+        "expected_invalid_positive_ids": {"positive-3"},
+    }
+    build_emergency_dataset(config, [archive], **kwargs)
+
+    with pytest.raises(DetectionDatasetError, match="refusing to overwrite"):
+        build_emergency_dataset(config, [archive], **kwargs)
+
+
+def test_annotation_audit_rejects_remote_group_override(tmp_path):
+    config, candidates = _offline_fixture(tmp_path)
+    _approve_all_fixture_candidates(config, candidates)
+    project = config.parent.parent
+    export = project / "datasets/processed/export"
+    labels = export / "labels"
+    labels.mkdir(parents=True)
+    rows = []
+    for candidate in candidates:
+        status = "positive" if candidate["candidate_role"] == "positive_candidate" else "negative"
+        (labels / f"{candidate['image_id']}.txt").write_text(
+            "0 0.5 0.5 0.4 0.2\n" if status == "positive" else "",
+            encoding="utf-8",
+        )
+        rows.append(
+            {
+                "image_id": candidate["image_id"],
+                "image_file": f"{candidate['image_id']}.jpg",
+                "final_status": status,
+                "task_id": "task-0001",
+                "reviewer": "Annotator",
+                "reviewed_at": "2026-08-24T12:00:00+00:00",
+                "group_id": "remote-override"
+                if candidate is candidates[0]
+                else candidate["group_id"],
+            }
+        )
+    detection_dataset._write_csv(
+        export / "review.csv",
+        rows,
+        [
+            "image_id",
+            "image_file",
+            "final_status",
+            "task_id",
+            "reviewer",
+            "reviewed_at",
+            "group_id",
+        ],
+    )
+
+    report = detection_dataset.audit_annotations(config, materialize=False)
+
+    assert any(
+        "Review group_id changed from manifest" in blocker
+        for blocker in report["blockers"]
+    )
 
 
 def test_negative_audit_export_and_import_do_not_change_curation(tmp_path):

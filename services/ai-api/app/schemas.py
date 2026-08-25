@@ -14,28 +14,27 @@ from pydantic import BaseModel, Field
 
 
 class PredictionDebug(BaseModel):
-    """Raw model output and adapter internals, for traceability/debugging."""
+    """Raw detector and maturity-model output for traceability."""
 
-    predicted_class: str = Field(
-        description="Raw argmax class from the 4-class CV classifier."
+    predicted_class: Optional[str] = Field(
+        default=None,
+        description="Raw argmax class; null when detection short-circuits maturity inference.",
     )
-    class_probabilities: dict[str, float] = Field(
-        description="Raw per-class probabilities from the classifier."
+    class_probabilities: Optional[dict[str, float]] = Field(
+        default=None,
+        description="Raw class probabilities; null when no banana is detected.",
     )
-    maturity_class_scale: dict[str, float] = Field(
-        description="PisGo design mapping from class to UI scale 1-7 (not calibrated)."
+    maturity_class_scale: Optional[dict[str, float]] = Field(
+        default=None,
+        description="PisGo class-to-scale mapping; null when no banana is detected.",
     )
-    foreground_proxy_ratio: float = Field(
-        description="Share of banana-like pixels; basis of the detection heuristic."
-    )
-    banana_detection_threshold: float = Field(
-        description="Heuristic threshold applied to foreground_proxy_ratio."
-    )
-    detection_method: str = Field(
-        default="foreground-color-heuristic-proxy",
-        description="Detection is a color heuristic proxy, not a trained detector.",
-    )
-    inference_milliseconds: Optional[float] = None
+    detector_model_version: str
+    detection_score: Optional[float] = Field(default=None, ge=0, le=1)
+    detection_count: int = Field(ge=0)
+    detection_threshold: float = Field(ge=0, le=1)
+    detection_method: str = "yolo11n-class-0"
+    detector_inference_milliseconds: Optional[float] = Field(default=None, ge=0)
+    inference_milliseconds: Optional[float] = Field(default=None, ge=0)
 
 
 class PredictionResponse(BaseModel):

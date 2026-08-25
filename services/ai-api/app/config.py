@@ -36,12 +36,8 @@ MATURITY_CLASS_SCALE: dict[str, float] = {
 # 1-7 UI scale. Placeholder pending real data; documented as such.
 MATURITY_RATE_PER_DAY: float = 0.15
 
-# Banana detection is a HEURISTIC PROXY, not a trained detector. The classifier
-# assumes its input is a Cavendish banana photo; the only signal we expose is
-# the artifact's `foreground_proxy_ratio` feature (share of pixels that fall in
-# a banana-like hue/saturation band). If it is below this threshold we report
-# banana_detected=false. Not a precision/recall-validated detector.
-BANANA_FOREGROUND_MIN_RATIO: float = 0.02
+DETECTOR_MODEL_VERSION: str = "banana-bunch-yolo11n-emergency-v1"
+DETECTOR_CONFIDENCE_THRESHOLD: float = 0.25
 
 ADAPTER_VERSION: str = "pisgo-ai-api-v1"
 
@@ -52,6 +48,10 @@ MAX_IMAGE_BYTES: int = 10 * 1024 * 1024
 
 def _default_model_path() -> Path:
     return REPO_ROOT / "ml" / "models" / "cavendish_maturity_classifier.joblib"
+
+
+def _default_detector_path() -> Path:
+    return REPO_ROOT / "ml" / "models" / "banana_bunch_yolo11n_emergency_v1.pt"
 
 
 def _load_class_scale() -> dict[str, float]:
@@ -65,9 +65,11 @@ def _load_class_scale() -> dict[str, float]:
 @dataclass(frozen=True)
 class Settings:
     model_path: Path = field(default_factory=_default_model_path)
+    detector_path: Path = field(default_factory=_default_detector_path)
+    detector_model_version: str = DETECTOR_MODEL_VERSION
+    detector_confidence_threshold: float = DETECTOR_CONFIDENCE_THRESHOLD
     maturity_class_scale: dict[str, float] = field(default_factory=_load_class_scale)
     maturity_rate_per_day: float = MATURITY_RATE_PER_DAY
-    banana_foreground_min_ratio: float = BANANA_FOREGROUND_MIN_RATIO
     adapter_version: str = ADAPTER_VERSION
     cultivar: str = CULTIVAR
     max_image_bytes: int = MAX_IMAGE_BYTES
@@ -78,10 +80,14 @@ def load_settings() -> Settings:
     overrides: dict = {}
     if os.environ.get("CV_MODEL_PATH"):
         overrides["model_path"] = Path(os.environ["CV_MODEL_PATH"])
+    if os.environ.get("DETECTOR_MODEL_PATH"):
+        overrides["detector_path"] = Path(os.environ["DETECTOR_MODEL_PATH"])
+    if os.environ.get("DETECTOR_MODEL_VERSION"):
+        overrides["detector_model_version"] = os.environ["DETECTOR_MODEL_VERSION"]
+    if os.environ.get("DETECTOR_CONFIDENCE_THRESHOLD"):
+        overrides["detector_confidence_threshold"] = float(
+            os.environ["DETECTOR_CONFIDENCE_THRESHOLD"]
+        )
     if os.environ.get("MATURITY_RATE_PER_DAY"):
         overrides["maturity_rate_per_day"] = float(os.environ["MATURITY_RATE_PER_DAY"])
-    if os.environ.get("BANANA_FOREGROUND_MIN_RATIO"):
-        overrides["banana_foreground_min_ratio"] = float(
-            os.environ["BANANA_FOREGROUND_MIN_RATIO"]
-        )
     return Settings(**overrides)

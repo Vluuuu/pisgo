@@ -59,56 +59,58 @@
         "predicted_class",
         "class_probabilities",
         "maturity_class_scale",
-        "foreground_proxy_ratio",
-        "banana_detection_threshold",
+        "detector_model_version",
+        "detection_score",
+        "detection_count",
+        "detection_threshold",
         "detection_method",
+        "detector_inference_milliseconds",
         "inference_milliseconds"
       ],
       "properties": {
         "predicted_class": {
-          "type": "string",
-          "enum": ["unripe", "half_ripe", "ripe", "overripe"]
+          "type": ["string", "null"],
+          "enum": ["unripe", "half_ripe", "ripe", "overripe", null]
         },
         "class_probabilities": {
-          "type": "object",
-          "required": ["unripe", "half_ripe", "ripe", "overripe"],
-          "properties": {
-            "unripe": {"type": "number", "minimum": 0, "maximum": 1},
-            "half_ripe": {"type": "number", "minimum": 0, "maximum": 1},
-            "ripe": {"type": "number", "minimum": 0, "maximum": 1},
-            "overripe": {"type": "number", "minimum": 0, "maximum": 1}
-          },
-          "additionalProperties": false
+          "oneOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "required": ["unripe", "half_ripe", "ripe", "overripe"],
+              "properties": {
+                "unripe": {"type": "number", "minimum": 0, "maximum": 1},
+                "half_ripe": {"type": "number", "minimum": 0, "maximum": 1},
+                "ripe": {"type": "number", "minimum": 0, "maximum": 1},
+                "overripe": {"type": "number", "minimum": 0, "maximum": 1}
+              },
+              "additionalProperties": false
+            }
+          ]
         },
         "maturity_class_scale": {
-          "type": "object",
-          "required": ["unripe", "half_ripe", "ripe", "overripe"],
-          "properties": {
-            "unripe": {"type": "number"},
-            "half_ripe": {"type": "number"},
-            "ripe": {"type": "number"},
-            "overripe": {"type": "number"}
-          },
-          "additionalProperties": false
+          "oneOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "required": ["unripe", "half_ripe", "ripe", "overripe"],
+              "properties": {
+                "unripe": {"type": "number"},
+                "half_ripe": {"type": "number"},
+                "ripe": {"type": "number"},
+                "overripe": {"type": "number"}
+              },
+              "additionalProperties": false
+            }
+          ]
         },
-        "foreground_proxy_ratio": {
-          "type": "number",
-          "minimum": 0,
-          "maximum": 1
-        },
-        "banana_detection_threshold": {
-          "type": "number",
-          "minimum": 0,
-          "maximum": 1
-        },
-        "detection_method": {
-          "type": "string",
-          "const": "foreground-color-heuristic-proxy"
-        },
-        "inference_milliseconds": {
-          "type": ["number", "null"],
-          "minimum": 0
-        }
+        "detector_model_version": {"type": "string", "minLength": 1},
+        "detection_score": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+        "detection_count": {"type": "integer", "minimum": 0},
+        "detection_threshold": {"type": "number", "minimum": 0, "maximum": 1},
+        "detection_method": {"type": "string", "const": "yolo11n-class-0"},
+        "detector_inference_milliseconds": {"type": ["number", "null"], "minimum": 0},
+        "inference_milliseconds": {"type": ["number", "null"], "minimum": 0}
       },
       "additionalProperties": false
     }

@@ -15,6 +15,7 @@ dependencies = [
   "PyYAML>=6.0,<7.0",
   "joblib>=1.3,<2.0",
   "Pillow>=10.0,<13.0",
+  "ultralytics==8.4.127",
 ]
 
 [project.optional-dependencies]

@@ -109,9 +109,12 @@ class TestNoBanana:
         assert body["days_to_target"] is None
         # Dates still computed honestly
         assert body["days_after_flowering"] == 21
-        # Raw classifier output still available for debugging
-        assert body["debug"]["predicted_class"] in MATURITY_CLASS_SCALE
-        assert body["debug"]["foreground_proxy_ratio"] < body["debug"]["banana_detection_threshold"]
+        # Maturity inference is skipped; detector evidence remains traceable.
+        assert body["debug"]["predicted_class"] is None
+        assert body["debug"]["class_probabilities"] is None
+        assert body["debug"]["detection_count"] == 0
+        assert body["debug"]["detection_score"] is None
+        assert body["debug"]["detection_method"] == "yolo11n-class-0"
 
 
 class TestValidation:

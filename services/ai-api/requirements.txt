@@ -1,5 +1,6 @@
 fastapi>=0.115
 uvicorn>=0.30
 python-multipart>=0.0.9
-# ML runtime comes from the repo's ml package (ml/requirements.txt):
+ultralytics==8.4.127
+# Remaining ML runtime comes from the repo's ml package:
 # joblib, numpy, scikit-learn, pillow
